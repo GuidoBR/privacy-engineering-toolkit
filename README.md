@@ -320,6 +320,29 @@ For law summaries: cite sources. For scripts: add usage examples and exit codes.
 
 ---
 
+## References
+
+Resources that informed the design and content of this toolkit:
+
+### Articles and research
+
+| Title | Author(s) | Notes |
+|---|---|---|
+| [Direitos dos usuários: deletar dados é mais difícil do que parece](https://yaso.substack.com) | Yaso & Ana Paula Gomes (Universität Berlin / Robert Koch Institute) | Foundation for the deletion audit coverage: soft-delete vs real erasure, ORM cascade bypass, crypto shredding, event sourcing, data warehouse propagation, Brazilian sectoral retention rules, and the structured deletion response document |
+
+### Laws and regulations referenced
+
+| Instrument | Jurisdiction | Relevance |
+|---|---|---|
+| [GDPR — Regulation (EU) 2016/679](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32016R0679) | EU/EEA | Art. 17 (right to erasure), Art. 16 retention exceptions, Art. 25 privacy by design |
+| [LGPD — Lei 13.709/2018](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm) | Brazil | Art. 16 (retention after deletion request), Art. 18 (data subject rights), Art. 46 (security) |
+| [Resolução BCB nº 522/2025](https://www.bcb.gov.br/estabilidadefinanceira/exibenormativo?tipo=Resolu%C3%A7%C3%A3o%20BCB&numero=522) | Brazil | Supersedes CMN 4.893/2021 — 5-year retention for Pix and payment transaction records |
+| [Lei 9.613/1998 (Anti-Money Laundering)](https://www.planalto.gov.br/ccivil_03/leis/l9613.htm) | Brazil | 10-year retention of KYC/AML documents after end of customer relationship |
+| [Código Tributário Nacional — Art. 173](https://www.planalto.gov.br/ccivil_03/leis/l5172compilado.htm) | Brazil | 5-year tax record retention |
+| [CCPA — California Civil Code §1798](https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=CIV&sectionNum=1798.100) | California, USA | §1798.105 right to delete, §1798.121 sensitive personal information |
+
+---
+
 ## Disclaimer
 
 This toolkit is provided for informational and educational purposes. It is **not legal advice**. Consult a qualified privacy lawyer for compliance decisions. Privacy law varies by jurisdiction and is updated frequently — law summaries may not reflect the latest amendments.
