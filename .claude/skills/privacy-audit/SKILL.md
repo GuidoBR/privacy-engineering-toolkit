@@ -240,6 +240,27 @@ For each IaC file found, check:
 ☐ tables containing PII tagged accordingly
 ```
 
+**PostgreSQL — MVCC and physical deletion lag:**
+```
+PostgreSQL's MVCC mechanism means that a DELETE statement does not immediately remove
+the tuple from disk. The old version persists until AUTOVACUUM reclaims it. On
+high-write PII tables, this creates dead tuples that:
+  (a) physically retain personal data on disk after logical deletion
+  (b) inflate table size and degrade I/O performance
+
+☐ AUTOVACUUM is not disabled on PII-heavy tables
+    Check: grep for 'autovacuum_enabled = false' in table DDL or Terraform RDS parameter groups
+☐ For bulk deletions (e.g. a large erasure batch), schedule an explicit VACUUM after:
+    VACUUM (VERBOSE, ANALYZE) users;
+☐ After deleting/anonymising a large user set, verify with:
+    SELECT n_dead_tup, last_autovacuum FROM pg_stat_user_tables WHERE relname = 'users';
+    Dead tuples > 0 after a bulk erasure = data still physically present on disk.
+☐ fillfactor on PII tables is not set so low that update/delete churn delays VACUUM
+☐ WAL (Write-Ahead Log) archiving retention is documented — WAL archives contain the
+    pre-deletion row versions and may persist beyond the logical deletion date.
+    Ensure WAL archive retention matches the backup retention policy, not indefinitely.
+```
+
 **IAM / Access Control:**
 ```
 ☐ no wildcard actions (*) on sensitive resources (S3 PII buckets, KMS, Cognito)
@@ -274,9 +295,55 @@ grep -rPn --include="*.py" --include="*.ts" \
   'export\|download.*csv\|download.*excel\|bulk.*export' \
   . 2>/dev/null
 
-# Check if deleted_at soft-delete is used (right to erasure gap)
-grep -rPn --include="*.py" \
+# Check if deleted_at soft-delete is used WITHOUT a real anonymisation/purge path
+grep -rPn --include="*.py" --include="*.rb" --include="*.ts" --include="*.go" \
   'deleted_at\|soft.delete\|is_deleted\|archived_at' \
+  . 2>/dev/null
+# Then check whether a companion anonymisation query or scheduled purge exists:
+grep -rPn --include="*.py" --include="*.rb" --include="*.ts" \
+  'deletion_scheduled_for\|purge\|anonymis\|anonymiz\|redacted\.invalid\|@deleted' \
+  . 2>/dev/null
+
+# Detect orphaned-data risk: user_id/owner_id columns without a FK constraint
+# Step 1 — find columns that look like FK references to users
+grep -rPn --include="*.sql" --include="*.py" --include="*.rb" \
+  '\buser_id\b\|\bowner_id\b\|\bauthor_id\b\|\bcreated_by\b' \
+  . 2>/dev/null | grep -v 'ForeignKey\|REFERENCES\|references :user\|belongs_to' | head -40
+# Step 2 — confirm which of those have no FK defined
+grep -rPn --include="*.sql" \
+  'REFERENCES users\|REFERENCES "users"' \
+  . 2>/dev/null
+
+# Detect ORM cascade strategy — framework-specific risk
+# Django: on_delete lives in Python, bypassed by direct DB access
+grep -rPn --include="*.py" \
+  'on_delete=models\.\(CASCADE\|SET_NULL\|PROTECT\|DO_NOTHING\)' \
+  . 2>/dev/null
+# Rails: distinguish app-layer (:destroy/:delete_all) from DB-layer (add_foreign_key)
+grep -rPn --include="*.rb" \
+  'dependent: :destroy\|dependent: :delete_all\|add_foreign_key.*on_delete' \
+  . 2>/dev/null
+# Check for microservice / multi-service DB access patterns (bypass risk)
+grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
+  'engine\s*=\|createConnection\|knex\|db\.connect\|sql\.Open' \
+  . 2>/dev/null | grep -v 'test\|spec\|migration' | head -20
+
+# Detect event-sourcing / append-only architectures (require crypto shredding)
+grep -rPn --include="*.py" --include="*.ts" --include="*.go" --include="*.java" \
+  'KafkaProducer\|KinesisClient\|DynamoDBStreams\|EventStore\|event_store\|append_event\|EventBus\|outbox' \
+  . 2>/dev/null | head -20
+# Check whether crypto shredding (per-user encryption key destruction) is implemented
+grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
+  'crypto.shred\|shred_key\|destroy.*key\|delete.*encryption.*key\|kms.*delete\|KMSClient.*delete\|ScheduleKeyDeletion' \
+  . 2>/dev/null
+
+# Detect data warehouse / analytics pipeline integrations (deletion rarely propagates)
+grep -rPn --include="*.py" --include="*.ts" --include="*.yml" --include="*.yaml" \
+  'bigquery\|redshift\|snowflake\|dbt\b\|fivetran\|airbyte\|stitch\|singer\b\|meltano' \
+  . 2>/dev/null | head -20
+# Check whether a deletion propagation path exists for the warehouse
+grep -rPn --include="*.py" --include="*.ts" \
+  'delete.*warehouse\|warehouse.*delete\|gdpr.*sync\|right.*erasure.*warehouse\|deletion.*propagat' \
   . 2>/dev/null
 ```
 
@@ -285,7 +352,11 @@ grep -rPn --include="*.py" \
 - Authorization checks (users can only access their own data)
 - Input validation on PII fields (email format, phone format)
 - Rate limiting on auth, password reset, and email lookup endpoints
-- Whether "soft delete" actually removes PII or just sets a flag (GDPR Art. 17 violation if PII persists)
+- **Soft delete without real erasure (HIGH):** `deleted_at`/`is_deleted` flags that leave PII in place are **not** erasure under GDPR Art. 17 / LGPD Art. 18(VI) — they are concealment (ocultação). A companion anonymisation query or scheduled purge job is required. Raise as HIGH if absent.
+- **Orphaned data without FK constraints (MEDIUM):** `user_id`-type columns with no `REFERENCES` constraint or ORM `ForeignKey` declaration accumulate orphan PII silently after user deletion. List every instance found.
+- **ORM cascade bypass risk (MEDIUM):** Django `on_delete` and Rails `dependent:` operate at the application layer only. Any service that accesses the database directly (a microservice, a data pipeline, a script) will bypass this logic and leave orphan rows. Raise as MEDIUM in any multi-service architecture. The fix is to also define a `ON DELETE CASCADE` / `ON DELETE SET NULL` constraint at the database level.
+- **Event sourcing without crypto shredding (HIGH):** Kafka, Kinesis, DynamoDB Streams, or any append-only event log is architecturally incompatible with deletion. The only compliant strategy is **crypto shredding**: encrypt PII fields with a per-user key derived from the user ID; "deletion" means destroying that key via KMS. Raise as HIGH if an event sourcing pattern is detected with no crypto shredding implementation.
+- **Data warehouse with no deletion propagation (HIGH):** BigQuery, Redshift, Snowflake, and dbt pipelines do not automatically receive deletions from the production database. A deletion in the main DB leaves the data intact in the warehouse unless the pipeline was explicitly designed to propagate it. Raise as HIGH if a warehouse integration is found with no corresponding deletion sync.
 - Response bodies — do error messages leak PII from other users?
 - Bulk export endpoints — are they admin-only?
 
@@ -455,6 +526,7 @@ For each law, assess compliance based on findings above.
 | Art. 8 | Consent: specific, prominent, unambiguous; cannot be bundled | ? | |
 | Art. 11 | Sensitive data: explicit, specific consent required | ? | |
 | Art. 15 | End of processing: upon purpose achieved, legal period expired, or revocation | ? | |
+| Art. 16 | Retention after deletion request permitted only for: legal/regulatory obligation, exercise of rights in judicial/administrative proceedings, or credit protection — each retained category must have a documented legal basis | ? | |
 | Art. 18 | Data subject rights: access, correction, deletion, anonymization, portability, information on sharing, right to object, revoke consent | ? | |
 | Art. 20 | Automated decision-making: data subject can request review by human | ? | |
 | Art. 37 | Record of processing activities maintained (RIPD — Relatório de Impacto) | ? | |
@@ -471,6 +543,21 @@ For each law, assess compliance based on findings above.
 - Sensitive data (Art. 11) requires explicit consent OR legal/regulatory compliance OR shared data for exercise of rights
 - CPF (individual taxpayer ID) and CNPJ are highly regulated — treat as CRITICAL
 - Privacy policy must be available in Portuguese
+
+**Brazilian sectoral retention rules (override LGPD Art. 18 deletion rights):**
+
+These regulations require data to be retained even after a deletion request. For each retained category, the company must document the legal basis and expected retention end date in its deletion response.
+
+| Sector | Regulation | Data Retained | Retention Period |
+|---|---|---|---|
+| Payments / Pix / banking | Resolução BCB nº 522/2025 (supersedes CMN 4.893/2021) | Transaction records, Pix logs, payment metadata | 5 years |
+| Anti-money-laundering (KYC) | Lei 9.613/1998 | KYC documents, identity verification, transaction history | 10 years after end of customer relationship |
+| Tax / accounting | Código Tributário Nacional (CTN) Art. 173 | Invoices, revenue records, tax-relevant transactions | 5 years |
+| Credit operations | Resolução CMN 4.557/2017 / BCB rules | Credit risk records, loan contracts | Duration of contract + 5 years |
+| Children's content | ECA Digital (Lei 13.431 and related) | Any data involving minors requires heightened protection; deletion may require parental/guardian confirmation | Special rules — assess per product |
+| Healthcare | CFM regulations + LGPD Art. 11 | Medical records | 20 years (medical council rules) |
+
+**Audit action:** If the codebase shows any fintech (Pix, credit, KYC), healthcare, or tax features, cross-reference all retained data categories against the table above. Any deletion response that simply says "all data deleted" without addressing these retention obligations is a compliance gap — the correct output is a structured document per Art. 16 (see DSAR section).
 
 ---
 
@@ -607,9 +694,36 @@ Check for the existence and completeness of:
 ☐ Machine-readable export format available (CSV/JSON) for portability right
 ☐ Deletion process removes PII from: DB, backups, logs, CDN caches, third-party processors
 ☐ Third-party processors notified of deletion (ShipStation, QuickBooks, etc.)
-☐ Deletion audit trail maintained (what was deleted, when, by whom)
+☐ Deletion audit trail maintained (what was deleted, when, by whom) — using opaque reference (hashed user ID), never the user's email
+☐ **Structured deletion response document produced** (see below — required for regulated industries)
 ☐ Process documented in runbook
 ☐ Process tested end-to-end at least annually
+
+**Structured deletion response document (HIGH gap if absent in regulated contexts):**
+
+For companies subject to sectoral retention rules (fintech, healthcare, KYC/AML), a simple "your account was deleted" response is insufficient and potentially misleading. The correct output is an auditable document delivered to the user that covers:
+
+```
+1. What was deleted:
+   - User profile fields (name, email, phone, address) — anonymised on [date]
+   - Session tokens — revoked on [date]
+   - Profile photo — removed from storage on [date]
+
+2. What was retained and why:
+   - Transaction records: retained for 5 years per Resolução BCB 522/2025
+     (last transaction: [date], retention expires: [date])
+   - KYC documents: retained for 10 years per Lei 9.613/1998
+     (relationship ended: [date], retention expires: [date])
+   - Audit logs: event records retained with opaque reference (no PII) per legal obligation
+
+3. Third-party processors notified:
+   - [Processor name]: deletion request sent on [date], confirmation received on [date]
+
+4. Reference number: [opaque ID for follow-up]
+5. Contact for questions: [DPO / privacy team email]
+```
+
+Check whether `templates/dsar-response.md` covers this structure. Raise as HIGH finding if the system only returns a success HTTP status with no auditability, or if the deletion response doesn't distinguish retained vs deleted data with legal bases.
 ```
 
 **API checks for DSAR support:**
@@ -799,6 +913,127 @@ jobs:
 
 ---
 
+## Phase 5B — Deletion Verification
+
+This phase answers the question every data subject should be able to ask: *"How can I be sure my data was actually deleted?"* Run these checks against the codebase and (where possible) a staging environment.
+
+### 5B-1. Static verification — does deletion logic cover all layers?
+
+```bash
+# Find the deletion/erasure endpoint or service method
+grep -rPn --include="*.py" --include="*.ts" --include="*.rb" --include="*.go" \
+  'delete.*account\|erasure\|right.*forget\|gdpr.*delete\|dsar.*delete\|anonymis\|anonymiz' \
+  src/ app/ . 2>/dev/null | grep -v test | grep -v spec
+
+# Check whether each of the following stores is addressed in the deletion path:
+# 1. Primary DB — look for UPDATE...NULL or DELETE FROM users
+grep -rPn --include="*.py" --include="*.ts" --include="*.sql" \
+  'UPDATE.*users.*SET.*NULL\|DELETE FROM users\|prisma\.user\.delete\|User\.objects\.filter.*delete' \
+  . 2>/dev/null
+
+# 2. Cache / Redis — session and user cache invalidation
+grep -rPn --include="*.py" --include="*.ts" \
+  'redis.*delete\|cache.*delete\|invalidate.*session\|revoke.*token\|Session.*delete\|logout.*all' \
+  . 2>/dev/null
+
+# 3. Search indices — Elasticsearch, Algolia, Typesense
+grep -rPn --include="*.py" --include="*.ts" \
+  'es\.delete\|client\.delete\|algolia.*delete\|index\.delete\|typesense.*delete' \
+  . 2>/dev/null
+
+# 4. Object storage — S3, GCS blobs (profile photos, documents)
+grep -rPn --include="*.py" --include="*.ts" \
+  's3.*delete\|delete_object\|storage\.delete\|bucket.*delete\|blob.*delete' \
+  . 2>/dev/null
+
+# 5. Message queues — in-flight PII messages
+grep -rPn --include="*.py" --include="*.ts" \
+  'purge.*queue\|delete.*message\|cancel.*task\|revoke.*task\|celery.*revoke' \
+  . 2>/dev/null
+
+# 6. Audit log — confirm it uses opaque reference, not email
+grep -rPn --include="*.py" --include="*.ts" \
+  'audit_log\|AuditLog\|audit\.create\|log_event' \
+  . 2>/dev/null | grep -i 'delet\|erasure\|removal'
+
+# 7. Deletion registry — required for backup reconciliation
+grep -rPn --include="*.py" --include="*.ts" --include="*.sql" \
+  'deletion_registry\|deletion_log\|erasure_registry\|DeletionRecord' \
+  . 2>/dev/null
+```
+
+### 5B-2. Deletion completeness checklist
+
+```
+For each layer below, mark: ✓ covered | ✗ missing | N/A not applicable
+
+Primary database
+☐ PII fields are NULL'd or anonymised (email → deleted+{id}@redacted.invalid, name → "Deleted")
+☐ Hard delete OR anonymisation + scheduled purge — NOT a bare soft-delete flag alone
+☐ Cascades or explicit child-table cleanup documented and tested
+☐ Foreign key orphan risk assessed (see Phase 2D)
+☐ For PostgreSQL: VACUUM scheduled after bulk erasure; dead tuple count monitored
+
+Session / cache layer
+☐ All session tokens revoked (DB sessions table, Redis, JWT blocklist)
+☐ In-memory user object cache cleared (Redis, Memcached)
+
+Search indices
+☐ Elasticsearch / OpenSearch document deleted
+☐ Algolia / Typesense record deleted
+
+Object storage
+☐ Profile photos, avatars removed from S3/GCS
+☐ User-uploaded documents removed or handed to legal hold if retained
+☐ Pre-signed URLs for deleted objects expire or are invalidated
+
+Message queues / async tasks
+☐ Queued tasks referencing this user ID cancelled (Celery revoke, SQS purge)
+☐ Outbox / event log checked for unprocessed events with user PII
+
+Analytics and third-party processors
+☐ Mixpanel / Amplitude / Segment deletion API called
+☐ CRM (HubSpot, Salesforce) contact deleted
+☐ Email service provider (SendGrid, Mailchimp) contact and suppression list cleared
+☐ Error tracking (Sentry) user data scrubbed
+
+Event sourcing / append-only logs
+☐ If Kafka/Kinesis/event store detected: crypto shredding key destroyed via KMS
+☐ Destruction of key documented and timestamped in deletion registry
+
+Data warehouses / BI pipelines
+☐ BigQuery / Redshift / Snowflake user rows deleted or anonymised
+☐ dbt / Fivetran / Airbyte deletion propagation pipeline exists and is tested
+
+Backups
+☐ Deletion registry updated with user_id hash + deletion date
+☐ Backup restoration runbook includes step: re-run deletion registry reconciliation
+☐ Backup retention period is the minimum required (not indefinite)
+
+Audit trail
+☐ Deletion event recorded in audit log using opaque reference (SHA-256 of user_id), not email
+☐ Timestamp and acting user (admin / self-service) recorded
+☐ Deletion response document generated and deliverable to data subject on request
+```
+
+### 5B-3. Raise findings for any unchecked row
+
+| Layer uncovered | Severity |
+|---|---|
+| Primary DB — bare soft-delete with no anonymisation or purge | HIGH |
+| Event sourcing with no crypto shredding | HIGH |
+| Data warehouse with no deletion propagation | HIGH |
+| Cache / session tokens not revoked | HIGH |
+| Search index not cleared | MEDIUM |
+| S3 objects not deleted | MEDIUM |
+| Analytics processor not notified | MEDIUM |
+| No deletion registry for backup reconciliation | MEDIUM |
+| Audit log uses email instead of opaque reference | MEDIUM |
+| No structured deletion response document | MEDIUM (HIGH for fintech/healthcare) |
+| Postgres VACUUM not scheduled after bulk erasure | LOW |
+
+---
+
 ## Phase 6 — Report Generation
 
 Write the full audit report to `docs/privacy-audit.md` (or `docs/plans/privacy-audit.md` if that directory exists). The report must follow this structure:
@@ -855,7 +1090,13 @@ Write the full audit report to `docs/privacy-audit.md` (or `docs/plans/privacy-a
 
 ## Deletion Policy Analysis
 
-[For each data category: is there a deletion mechanism? does soft-delete leave PII? are backups purged?]
+[For each data category: is there a deletion mechanism? does soft-delete leave PII (if so, HIGH finding)? are backups purged? is a deletion registry maintained?]
+
+[Table columns: Data category | Primary DB strategy | Cascade/orphan risk | Cache cleared | Warehouse propagation | Sectoral retention rule | Legal basis for retention | Notes]
+
+## Event Sourcing / Append-Only Architecture
+
+[If Kafka, Kinesis, DynamoDB Streams, or event sourcing detected: document whether crypto shredding is implemented. If not, raise as HIGH. Include which PII fields are written to the event log and which KMS key would need to be destroyed per-user.]
 
 ---
 
@@ -976,6 +1217,7 @@ logger.add(sys.stderr, filter=_scrub_pii)
 ### Soft-delete doesn't erase PII → fix
 ```sql
 -- Right to erasure: anonymise, don't just flag
+-- A bare soft-delete (deleted_at = NOW()) is ocultação, not erasure.
 UPDATE users
 SET email = CONCAT('deleted_', id, '@deleted.invalid'),
     name = 'DELETED',
@@ -987,6 +1229,101 @@ SET email = CONCAT('deleted_', id, '@deleted.invalid'),
     deleted_at = NOW()
 WHERE id = $1;
 -- Keep the row for referential integrity but PII is gone
+
+-- Also insert into the deletion registry for backup reconciliation:
+INSERT INTO deletion_registry (user_id_hash, deleted_at, reason)
+VALUES (encode(sha256($1::bytea), 'hex'), NOW(), 'user_request');
+
+-- After bulk erasure, reclaim disk space (PostgreSQL MVCC leaves dead tuples):
+-- VACUUM (VERBOSE, ANALYZE) users;
+-- Monitor: SELECT n_dead_tup FROM pg_stat_user_tables WHERE relname = 'users';
+```
+
+### Orphaned data (missing FK constraint) → fix
+```sql
+-- If user_id columns exist without a FK, add the constraint and clean up:
+
+-- 1. Clean up orphans already present:
+DELETE FROM messages WHERE user_id NOT IN (SELECT id FROM users);
+DELETE FROM activity_logs WHERE user_id NOT IN (SELECT id FROM users);
+
+-- 2. Add the FK so future deletes stay consistent:
+ALTER TABLE messages
+  ADD CONSTRAINT fk_messages_user
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+
+-- Note: ON DELETE SET NULL is safer when you need to preserve the row
+-- but remove the user association (e.g. audit logs, orders).
+ALTER TABLE orders
+  ADD CONSTRAINT fk_orders_user
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+```
+
+### Event sourcing / append-only log → crypto shredding
+```python
+# Crypto shredding pattern: encrypt PII fields with a per-user key.
+# "Deletion" = destroy the key. Events remain in the log but are unreadable.
+
+import boto3
+import base64
+import json
+from cryptography.fernet import Fernet
+
+kms = boto3.client('kms')
+KEY_ALIAS = 'alias/user-pii-{user_id}'
+
+def get_or_create_user_key(user_id: str) -> bytes:
+    """Return a data key encrypted under the user's KMS key."""
+    key_id = KEY_ALIAS.format(user_id=user_id)
+    response = kms.generate_data_key(KeyId=key_id, KeySpec='AES_256')
+    return response['Plaintext']  # use in memory only; store CiphertextBlob in event
+
+def encrypt_pii_for_event(user_id: str, payload: dict) -> dict:
+    """Wrap PII fields so they can be crypto-shredded later."""
+    plaintext_key = get_or_create_user_key(user_id)
+    f = Fernet(base64.urlsafe_b64encode(plaintext_key[:32]))
+    encrypted = f.encrypt(json.dumps(payload).encode())
+    return {'user_id': user_id, 'pii_encrypted': base64.b64encode(encrypted).decode()}
+
+def shred_user(user_id: str):
+    """
+    Crypto-shredding: schedule deletion of the KMS key.
+    After PendingDeletion window (min 7 days), all encrypted payloads
+    for this user become permanently unreadable.
+    """
+    key_id = KEY_ALIAS.format(user_id=user_id)
+    kms.schedule_key_deletion(KeyId=key_id, PendingWindowInDays=7)
+    # Log the shredding event using opaque reference only:
+    import hashlib
+    ref = hashlib.sha256(user_id.encode()).hexdigest()[:12]
+    audit_log(action='crypto_shred_scheduled', subject_ref=ref)
+```
+
+### Data warehouse deletion propagation → fix
+```python
+# Option 1: propagate hard deletes via your existing pipeline
+# In dbt: add a macro that filters deleted users from all models
+# macros/exclude_deleted_users.sql:
+#   {% macro exclude_deleted_users(user_id_col='user_id') %}
+#     {{ user_id_col }} NOT IN (SELECT user_id_hash FROM deletion_registry)
+#   {% endmacro %}
+
+# Option 2: direct deletion in BigQuery after erasure request
+from google.cloud import bigquery
+
+def propagate_deletion_to_warehouse(user_id: str):
+    client = bigquery.Client()
+    tables_with_user_data = [
+        'project.dataset.events',
+        'project.dataset.sessions',
+        'project.dataset.purchases',
+    ]
+    for table in tables_with_user_data:
+        query = f"DELETE FROM `{table}` WHERE user_id = @user_id"
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("user_id", "STRING", user_id)]
+        )
+        client.query(query, job_config=job_config).result()
 ```
 
 ### No cookie consent → add
