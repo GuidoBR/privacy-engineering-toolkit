@@ -1,0 +1,239 @@
+name: Privacy & Security Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run weekly on Monday at 08:00 UTC
+    - cron: "0 8 * * 1"
+
+permissions:
+  contents: read
+  security-events: write  # required for SARIF upload to GitHub Code Scanning
+
+jobs:
+  # ── 1. PII in logs ───────────────────────────────────────────────────────────
+  pii-log-scan:
+    name: PII in Log Statements
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for PII in log statements
+        run: |
+          chmod +x scripts/scan-pii-logs.sh
+          bash scripts/scan-pii-logs.sh --format text .
+        continue-on-error: false
+
+      - name: Generate SARIF report
+        if: always()
+        run: |
+          chmod +x scripts/scan-pii-logs.sh
+          bash scripts/scan-pii-logs.sh --format sarif . > pii-results.sarif || true
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: pii-results.sarif
+          category: pii-log-scan
+
+  # ── 2. Tracker consent audit ─────────────────────────────────────────────────
+  tracker-scan:
+    name: Ungated Tracker Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for ungated trackers
+        run: |
+          chmod +x scripts/scan-trackers.sh
+          # Adjust the directory to your frontend source
+          bash scripts/scan-trackers.sh --dir . --format text
+        continue-on-error: true  # informational — set to false to block PRs
+
+  # ── 3. Secret scanning with gitleaks ─────────────────────────────────────────
+  gitleaks:
+    name: Secret Scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history scan
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # only needed for org-level scans
+
+  # ── 4. detect-secrets baseline check ─────────────────────────────────────────
+  detect-secrets:
+    name: Secret Baseline Check (detect-secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install detect-secrets
+        run: pip install detect-secrets
+
+      - name: Check against baseline
+        run: |
+          if [ -f .secrets.baseline ]; then
+            detect-secrets-hook --baseline .secrets.baseline $(git diff HEAD~1 --name-only 2>/dev/null | tr '\n' ' ' || echo ".")
+          else
+            echo "No .secrets.baseline found. Run scripts/init-secret-scanning.sh to create one."
+            exit 1
+          fi
+
+  # ── 5. Python SAST — bandit ───────────────────────────────────────────────────
+  bandit:
+    name: Python SAST (bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run bandit
+        run: |
+          bandit -r . \
+            --exclude ./.venv,./node_modules,./dist \
+            --format sarif \
+            --output bandit-results.sarif \
+            --severity-level medium \
+            || true  # don't fail on findings; SARIF upload handles reporting
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+
+  # ── 6. Multi-language SAST — semgrep ─────────────────────────────────────────
+  semgrep:
+    name: SAST (semgrep)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run semgrep (privacy + security rules)
+        run: |
+          semgrep ci \
+            --config "p/default" \
+            --config "p/owasp-top-ten" \
+            --config "p/secrets" \
+            --sarif \
+            --output semgrep-results.sarif \
+            || true
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep
+
+  # ── 7. Infrastructure SAST — checkov (Terraform / CDK / CloudFormation) ──────
+  checkov:
+    name: IaC Security Scan (checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install checkov
+        run: pip install checkov
+
+      - name: Run checkov
+        run: |
+          checkov \
+            --directory . \
+            --skip-path node_modules \
+            --skip-path .venv \
+            --skip-path dist \
+            --output sarif \
+            --output-file-path checkov-results.sarif \
+            --soft-fail \
+            || true
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif/results_sarif.sarif
+          category: checkov
+
+  # ── 8. Container / dependency vulnerability scan — trivy ─────────────────────
+  trivy:
+    name: Dependency Vulnerability Scan (trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"  # set to 1 to block on CRITICAL/HIGH
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+  # ── 9. Data inventory audit (weekly only) ────────────────────────────────────
+  data-inventory:
+    name: Data Inventory Report
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate data inventory
+        run: |
+          chmod +x scripts/generate-data-inventory.py
+          python3 scripts/generate-data-inventory.py \
+            --dir . \
+            --format markdown \
+            --output data-inventory-$(date +%Y-%m-%d).md
+        continue-on-error: true
+
+      - name: Upload inventory artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-inventory-${{ github.run_id }}
+          path: data-inventory-*.md
+          retention-days: 90
