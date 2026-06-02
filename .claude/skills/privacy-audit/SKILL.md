@@ -76,14 +76,18 @@ Launch **3 Explore agents in parallel** covering:
 
 For every table/collection/model found, build this inventory. Classify every field:
 
-| Field | Table | Type | Sensitivity | PII Category | Legal Basis Needed | Encrypted? | Retention Policy |
+| Field | Table | Type | Classification | PII Category | Legal Basis Needed | Encrypted? | Retention Policy |
 |---|---|---|---|---|---|---|---|
 
-**Sensitivity levels:**
-- `CRITICAL` — SSN/TIN, payment card data (PCI), biometric data, health data, passport/ID numbers, passwords/hashes
-- `HIGH` — full name, email, phone, full address, IP address, device fingerprint, signature image, geolocation
-- `MEDIUM` — city/state/country alone, username, opaque user ID, purchase history, behavioral data
-- `LOW` — non-identifying operational data
+**Data classification levels** (CISSP five-tier commercial model — reference: [AWS Data Classification whitepaper](https://docs.aws.amazon.com/whitepapers/latest/data-classification/data-classification-models-and-schemes.html)):
+
+| Tier | Description | Typical examples in a commercial system |
+|---|---|---|
+| `Sensitive` | Most limited access; highest integrity requirement; greatest organizational and regulatory damage if disclosed | SSN/TIN/CPF, payment card data (PCI), biometric data, health/medical records, passport/government ID numbers, passwords and hashes, GDPR Art. 9 / LGPD Art. 11 special categories (racial origin, religion, political opinion, sexual orientation) |
+| `Confidential` | Less restrictive within the company but causes damage to individuals or the organization if disclosed externally | Full name, email address, phone number, full postal address, IP address, device fingerprint, precise geolocation, signature images |
+| `Private` | Compartmental data that may not damage the company but must be kept private for legal, contractual, or ethical reasons | HR and employee records, purchase history, behavioral/activity data, session tokens, opaque internal user IDs, children's data (any tier where COPPA/Art. 8 applies) |
+| `Proprietary` | Data disclosed externally only on a limited basis; exposure reduces competitive advantage | Business logic, pricing rules, internal algorithms, API keys and secrets, technical specifications, non-public financial projections |
+| `Public` | Least sensitive; least harm if disclosed | Marketing content, published documentation, aggregate/anonymised statistics, company headcount, CNPJ (Brazil business ID) |
 
 **PII categories under major laws:**
 - GDPR Art. 4(1): any information relating to an identified or identifiable natural person
@@ -541,7 +545,7 @@ For each law, assess compliance based on findings above.
 - Supervisory authority: ANPD (Autoridade Nacional de Proteção de Dados)
 - Fines: up to 2% of Brazil revenue, capped at R$50 million per violation
 - Sensitive data (Art. 11) requires explicit consent OR legal/regulatory compliance OR shared data for exercise of rights
-- CPF (individual taxpayer ID) and CNPJ are highly regulated — treat as CRITICAL
+- CPF (individual taxpayer ID) is highly regulated — classify as **Sensitive**; CNPJ is a business identifier — classify as **Public**
 - Privacy policy must be available in Portuguese
 
 **Brazilian sectoral retention rules (override LGPD Art. 18 deletion rights):**
@@ -1034,6 +1038,217 @@ Audit trail
 
 ---
 
+## Phase 5C — Consent Management Platform Assessment
+
+This phase has two parts: **audit** what exists, then **design** what is missing.
+
+### 5C-1. Audit existing consent infrastructure
+
+```bash
+# Find consent-related tables in DB models/migrations
+grep -rPn --include="*.py" --include="*.rb" --include="*.ts" --include="*.sql" \
+  'consent\|privacy_polic\|terms.*version\|policy.*version\|cookie.*consent' \
+  . 2>/dev/null | grep -v node_modules | grep -v '.venv'
+
+# Find consent recording in backend
+grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
+  'record.*consent\|save.*consent\|consent.*record\|consent.*grant\|accept.*terms\|accept.*policy' \
+  src/ app/ . 2>/dev/null | grep -v test | grep -v spec
+
+# Find consent withdrawal / revocation
+grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
+  'withdraw.*consent\|revoke.*consent\|opt.*out\|unsubscribe\|delete.*consent' \
+  src/ app/ . 2>/dev/null | grep -v test | grep -v spec
+
+# Find consent-gated analytics or feature flags
+grep -rPn --include="*.ts" --include="*.tsx" --include="*.js" \
+  'consent.*analytic\|analytic.*consent\|if.*consent\|hasConsent\|consentGiven' \
+  src/ 2>/dev/null
+
+# Find privacy policy / terms pages and versioning
+grep -rPn --include="*.py" --include="*.ts" --include="*.html" \
+  'privacy.policy\|terms.of.service\|policy.*version\|policy.*effective\|is_current' \
+  src/ app/ . 2>/dev/null | grep -v node_modules
+
+# Find re-consent / policy-update flows
+grep -rPn --include="*.py" --include="*.ts" \
+  're.consent\|reconsent\|policy.*update\|terms.*update\|consent.*expired\|new.*policy' \
+  src/ app/ . 2>/dev/null | grep -v test
+```
+
+**Consent audit checklist:**
+
+```
+☐ consent_records table (or equivalent) exists with: user_id, purpose, granted bool,
+    granted_at timestamp, ip_address, user_agent, withdrawn_at nullable
+☐ privacy_policies table (or equivalent) exists with: version/id, content hash,
+    effective_date, is_current flag
+☐ Consent purposes are enumerated (TERMS_OF_SERVICE, PRIVACY_POLICY, MARKETING,
+    ANALYTICS, COOKIE_FUNCTIONAL — or equivalent)
+☐ Consent is recorded at initial registration (explicit opt-in, not pre-ticked)
+☐ Re-consent flow exists: triggered when a new policy version becomes effective
+☐ Consent withdrawal path exists for non-essential purposes (marketing, analytics)
+    — withdrawal of TERMS_OF_SERVICE = account closure, not just a toggle
+☐ Consent is recorded BEFORE analytics/tracking scripts load (GDPR Art. 7; LGPD Art. 8)
+☐ Timestamps stored in UTC with timezone
+☐ IP address and user-agent stored with consent record (GDPR Art. 7(1) — burden of proof)
+☐ Admin endpoint to view any user's consent history (for regulatory audits)
+☐ Consent records are NOT deleted when a user requests erasure
+    (Art. 17(3)(b) GDPR — retention needed to demonstrate legal basis; raise HIGH if deleted)
+☐ Frontend consent banner shown when no consent on record — not only on first visit
+☐ Privacy settings page exists so users can review and withdraw consent at any time
+```
+
+**Raise findings for any unchecked row:**
+
+| Gap | Severity |
+|---|---|
+| No consent records stored (no proof of consent) | HIGH |
+| Consent not obtained before analytics/tracking loads | HIGH |
+| No re-consent flow when policy is updated | HIGH |
+| Pre-ticked consent checkboxes | HIGH |
+| Consent records deleted on erasure (destroys proof of lawful basis) | HIGH |
+| No withdrawal mechanism for non-essential purposes | MEDIUM |
+| IP / user-agent not captured with consent record | MEDIUM |
+| No versioned privacy policy table | MEDIUM |
+| No admin consent audit endpoint | LOW |
+
+---
+
+### 5C-2. Design recommendation (produce if gaps are found)
+
+If the audit reveals a missing or incomplete consent management platform, include the following design in the report under **Consent Management Platform Design**.
+
+**DB schema:**
+
+```sql
+-- Versioned policy documents
+CREATE TABLE privacy_policies (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    purpose       TEXT NOT NULL,           -- e.g. 'PRIVACY_POLICY', 'TERMS_OF_SERVICE'
+    version       TEXT NOT NULL,           -- semver or date string, e.g. '2024-06-01'
+    content_hash  TEXT NOT NULL,           -- SHA-256 of policy text (tamper evidence)
+    effective_at  TIMESTAMPTZ NOT NULL,
+    is_current    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (purpose, version)
+);
+
+-- Only one current policy per purpose
+CREATE UNIQUE INDEX idx_privacy_policies_current
+    ON privacy_policies (purpose) WHERE is_current = TRUE;
+
+-- Per-user consent records (append-only — never update, only insert)
+CREATE TABLE consent_records (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    policy_id     UUID NOT NULL REFERENCES privacy_policies(id),
+    purpose       TEXT NOT NULL,
+    granted       BOOLEAN NOT NULL,        -- TRUE = consent given, FALSE = withdrawn
+    ip_address    INET,
+    user_agent    TEXT,
+    granted_at    TIMESTAMPTZ,             -- populated when granted = TRUE
+    withdrawn_at  TIMESTAMPTZ,             -- populated when granted = FALSE
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_consent_user_purpose ON consent_records (user_id, purpose, created_at DESC);
+```
+
+**Consent purposes enum:**
+
+```
+TERMS_OF_SERVICE    — required for account creation; withdrawal = account closure
+PRIVACY_POLICY      — required; must be re-obtained when policy changes materially
+MARKETING           — optional; email/SMS marketing
+ANALYTICS           — optional; behavioural analytics (Mixpanel, Amplitude, etc.)
+COOKIE_FUNCTIONAL   — optional; non-essential cookies
+```
+
+**API endpoints:**
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/v1/privacy/policies` | public | List all current policy versions |
+| `GET` | `/v1/privacy/policies/:id` | public | Get full policy text by ID |
+| `POST` | `/v1/privacy/consent` | user | Record consent grant or withdrawal |
+| `GET` | `/v1/privacy/consent` | user | Get authenticated user's current consent per purpose |
+| `DELETE` | `/v1/privacy/consent/:purpose` | user | Withdraw consent for a non-essential purpose |
+| `GET` | `/v1/admin/privacy/consent/:user_id` | admin | View full consent history for a user |
+
+**Consent flows to implement:**
+
+1. **Initial registration** — show explicit opt-in checkbox per purpose; submit records a `consent_records` row for each. Checkboxes for TERMS_OF_SERVICE and PRIVACY_POLICY must not be pre-ticked.
+
+2. **Policy update re-consent** — when a new policy version's `effective_at` is reached, set `is_current = TRUE` on the new row and `FALSE` on the old. On the user's next login, intercept with a re-consent modal before granting access. Record a new `consent_records` row; do not update the old one.
+
+3. **Consent withdrawal** — available in account settings for MARKETING, ANALYTICS, COOKIE_FUNCTIONAL. Insert a `consent_records` row with `granted = FALSE, withdrawn_at = NOW()`. TERMS_OF_SERVICE / PRIVACY_POLICY withdrawal triggers the account deletion flow instead.
+
+**Frontend components needed:**
+
+```
+☐ Consent banner — shown on first visit AND any time the user has no current consent
+    record for PRIVACY_POLICY or COOKIE_FUNCTIONAL. Must not set non-essential cookies
+    before the banner is dismissed with affirmative consent.
+☐ Privacy settings page — shows current consent status per purpose with
+    grant/withdrawal timestamps. Allows toggling MARKETING, ANALYTICS, COOKIE_FUNCTIONAL.
+☐ Consent hook / context — e.g. useConsent('ANALYTICS') → boolean. Gates all
+    analytics calls (Mixpanel.track, gtag, etc.) so they are no-ops until consent is given.
+☐ Re-consent modal — blocks access after login when a new policy version is detected.
+    Must present the diff or full new policy text; must not auto-accept on dismiss.
+```
+
+**Remediation code snippets:**
+
+```python
+# Backend: record consent (Python/FastAPI example)
+@router.post("/v1/privacy/consent")
+async def record_consent(
+    body: ConsentRequest,
+    current_user = Depends(get_current_user),
+    request: Request = None,
+    db = Depends(get_db),
+):
+    policy = db.query(PrivacyPolicy).filter_by(purpose=body.purpose, is_current=True).first()
+    if not policy:
+        raise HTTPException(404, "No current policy found for this purpose")
+    record = ConsentRecord(
+        user_id=current_user.id,
+        policy_id=policy.id,
+        purpose=body.purpose,
+        granted=body.granted,
+        ip_address=request.client.host,
+        user_agent=request.headers.get("user-agent"),
+        granted_at=datetime.utcnow() if body.granted else None,
+        withdrawn_at=datetime.utcnow() if not body.granted else None,
+    )
+    db.add(record)
+    db.commit()
+    return {"status": "recorded"}
+```
+
+```typescript
+// Frontend: consent hook that gates analytics
+// hooks/useConsent.ts
+import { useContext } from 'react';
+import { ConsentContext } from '../context/ConsentContext';
+
+export function useConsent(purpose: ConsentPurpose): boolean {
+  const { consents } = useContext(ConsentContext);
+  return consents[purpose]?.granted === true;
+}
+
+// Usage in analytics initialisation:
+const analyticsConsent = useConsent('ANALYTICS');
+useEffect(() => {
+  if (analyticsConsent) {
+    analytics.init(ANALYTICS_KEY);
+  }
+}, [analyticsConsent]);
+```
+
+---
+
 ## Phase 6 — Report Generation
 
 Write the full audit report to `docs/privacy-audit.md` (or `docs/plans/privacy-audit.md` if that directory exists). The report must follow this structure:
@@ -1114,7 +1329,20 @@ Write the full audit report to `docs/privacy-audit.md` (or `docs/plans/privacy-a
 
 ## Cookie & Consent Analysis
 
-[Findings from frontend audit]
+[Findings from frontend audit — cookie categories set before consent, missing banner, tracking pixels loaded unconditionally, etc.]
+
+---
+
+## Consent Management Platform Assessment
+
+[Audit findings from Phase 5C-1. For each gap found, include severity and regulation violated.]
+
+[If CMP is absent or materially incomplete, include the full design from Phase 5C-2 here:
+- DB schema: privacy_policies + consent_records tables
+- Consent purposes enum
+- API endpoint table
+- Consent flows: initial registration, policy-update re-consent, withdrawal
+- Frontend components needed: consent banner, privacy settings page, consent hook, re-consent modal]
 
 ---
 
@@ -1168,30 +1396,36 @@ Use these rules to classify each finding:
 
 ## Quick Reference: PII by Regulation
 
-| Data Type | GDPR | LGPD | CCPA | Notes |
-|---|---|---|---|---|
-| Name | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
-| Email | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
-| Phone | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
-| Full address | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
-| IP address | Art. 4(1) PII | Art. 5(I) | §1798.140 | Pseudonymous |
-| Device fingerprint | Art. 4(1) PII | Art. 5(I) | §1798.140 | Pseudonymous |
-| User-agent string | Art. 4(1) PII | Art. 5(I) | §1798.140 | Pseudonymous |
-| Geolocation (precise) | Art. 4(1) PII | Art. 5(I) | §1798.121 SPI | Sensitive in CCPA |
-| Health data | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
-| Biometric (fingerprint, signature, face) | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | DPIA required |
-| Racial / ethnic origin | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
-| Religious belief | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
-| Political opinion | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
-| Sexual orientation / sex life | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
-| SSN / CPF / TIN | Art. 4(1) PII | Art. 5(I) + Art. 11 | §1798.121 SPI | CRITICAL |
-| Payment card data | Art. 4(1) PII + PCI DSS | Art. 5(I) | §1798.121 SPI | PCI DSS applies |
-| Passwords / hashes | Art. 32 security | Art. 46 | Security | Never log; bcrypt/argon2 only |
-| Auth tokens | Art. 32 security | Art. 46 | Security | Hash before logging |
-| Children's data (<13/<16) | Art. 8 GDPR | Art. 14 LGPD | COPPA | Parental consent required |
-| Employee data | Art. 4(1) PII | Art. 5(I) | §1798.140 | Employment law also applies |
-| CPF (Brazil) | Art. 4(1) PII | **National ID — CRITICAL** | - | Strict Brazilian rules |
-| CNPJ (Brazil) | Lower risk | Business ID | - | Not personal data |
+Classification tiers follow the CISSP five-tier commercial model — reference: [AWS Data Classification whitepaper](https://docs.aws.amazon.com/whitepapers/latest/data-classification/data-classification-models-and-schemes.html).
+
+| Data Type | Classification | GDPR | LGPD | CCPA | Notes |
+|---|---|---|---|---|---|
+| Name | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
+| Email | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
+| Phone | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
+| Full address | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.140 | Standard PII |
+| IP address | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.140 | Pseudonymous |
+| Device fingerprint | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.140 | Pseudonymous |
+| User-agent string | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.140 | Pseudonymous |
+| Geolocation (precise) | Confidential | Art. 4(1) PII | Art. 5(I) | §1798.121 SPI | Sensitive in CCPA |
+| Health data | **Sensitive** | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection; DPIA required |
+| Biometric (fingerprint, signature, face) | **Sensitive** | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection; DPIA required |
+| Racial / ethnic origin | **Sensitive** | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
+| Religious belief | **Sensitive** | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
+| Political opinion | **Sensitive** | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
+| Sexual orientation / sex life | **Sensitive** | **Art. 9 Special** | **Art. 11 Sensitive** | §1798.121 SPI | Highest protection |
+| SSN / CPF / TIN | **Sensitive** | Art. 4(1) PII | Art. 5(I) + Art. 11 | §1798.121 SPI | Government ID; highest regulatory exposure |
+| Payment card data | **Sensitive** | Art. 4(1) PII + PCI DSS | Art. 5(I) | §1798.121 SPI | PCI DSS also applies |
+| Passwords / hashes | **Sensitive** | Art. 32 security | Art. 46 | Security | Never log; bcrypt/argon2 only |
+| Auth tokens | Private | Art. 32 security | Art. 46 | Security | Hash before logging |
+| Purchase / transaction history | Private | Art. 4(1) PII | Art. 5(I) | §1798.140 | Behavioral; sectoral retention rules may apply |
+| Behavioral / activity data | Private | Art. 4(1) PII | Art. 5(I) | §1798.140 | Profiling risk |
+| Children's data (<13/<16) | **Sensitive** | Art. 8 GDPR | Art. 14 LGPD | COPPA | Parental consent required regardless of other tier |
+| Employee / HR data | Private | Art. 4(1) PII | Art. 5(I) | §1798.140 | Employment law also applies |
+| CPF (Brazil) | **Sensitive** | Art. 4(1) PII | National ID — Art. 5(I) + strict ANPD rules | - | Treat with same care as SSN |
+| CNPJ (Brazil) | Public | Lower risk | Business ID only | - | Not personal data |
+| City / country alone | Public | Art. 4(1) if linkable | Art. 5(I) if linkable | §1798.140 if linkable | Re-identification risk when combined |
+| Aggregate / anonymised stats | Public | Not PII if truly anonymous | Not PII if truly anonymous | Not PI if truly anonymous | Verify k-anonymity / differential privacy |
 
 ---
 
