@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 # scan-trackers.sh — detect analytics, advertising, and tracking SDKs in frontend code
 #
-# Checks whether each tracker found is wrapped in a consent gate.
-# Exits 1 if any tracker loads unconditionally (without consent check).
+# Checks whether each tracker call is preceded by a consent guard within
+# CONSENT_WINDOW lines. File-level co-occurrence is NOT sufficient — a
+# consent variable defined at the top of a file does not gate a tracker
+# call at the bottom. This script inspects the lines immediately before
+# each tracker match.
+#
+# NOTE: Line-proximity analysis is a heuristic. It does not parse the AST.
+# A result of [GATED] means a consent guard was found within CONSENT_WINDOW
+# lines above the tracker call — verify manually that the guard is actually
+# conditional (e.g. inside an if block, a .then() callback, or an event handler).
+# A result of [UNGATED] means no guard was found in that window — it may
+# still be gated at a higher scope; investigate before treating as a violation.
+#
+# Exits 1 if any tracker appears ungated.
 #
 # Usage:
 #   ./scripts/scan-trackers.sh [directory]
@@ -14,6 +26,7 @@ set -euo pipefail
 SCAN_DIR="."
 FORMAT="text"
 FOUND=0
+CONSENT_WINDOW=20  # lines above tracker call to search for a consent guard
 
 if [ -t 1 ]; then
   RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
@@ -68,13 +81,42 @@ declare -a TRACKERS=(
   "Lucky Orange|session-replay|luckyorange\.com|__lo_uid"
 )
 
-# ── Consent gate patterns ─────────────────────────────────────────────────────
-# If any of these appear in the same file as a tracker, it's likely gated
-CONSENT_PATTERNS=(
-  "consent" "cookie.*accept" "cookieConsent" "CookieConsent" "gdprConsent"
-  "hasConsent" "analyticsEnabled" "trackingEnabled" "allowAnalytics"
-  "consentGiven" "userConsent" "cookieYes" "cookiebot" "onetrust"
-  "osano" "didomi" "axeptio" "tarteaucitron"
+# ── Consent guard patterns ────────────────────────────────────────────────────
+# These are matched against the CONSENT_WINDOW lines immediately preceding
+# each tracker call. They indicate a conditional guard — not just the presence
+# of a consent library in the same file.
+CONSENT_GUARD_PATTERNS=(
+  # Conditional checks
+  "if\s*\(.*consent"
+  "if\s*\(.*cookie"
+  "if\s*\(.*tracking"
+  "if\s*\(.*analytics"
+  "if\s*\(.*hasConsent"
+  "if\s*\(.*analyticsEnabled"
+  "if\s*\(.*trackingEnabled"
+  "if\s*\(.*allowAnalytics"
+  # Promise / callback patterns
+  "\.then\s*\(.*consent"
+  "onAccept\s*[=({]"
+  "OnConsentChanged\s*[=({]"
+  "onConsentChanged\s*[=({]"
+  # CMP-specific callbacks (OneTrust, Cookiebot, Didomi, Osano, etc.)
+  "OptanonWrapper"
+  "Cookiebot\.onaccept"
+  "cookiebot.*onaccept"
+  "didomi\.on\s*\("
+  "Osano\.cm\.on\s*\("
+  "axeptio.*completed"
+  "tarteaucitron.*job"
+  # Google Consent Mode v2
+  "consent_update"
+  "update.*consent"
+  # React / hook patterns
+  "useConsent\s*\("
+  "consentGiven\s*===?\s*true"
+  "consent\s*===?\s*true"
+  "analyticsConsent\s*&&"
+  "trackingConsent\s*&&"
 )
 
 # ── scan ──────────────────────────────────────────────────────────────────────
@@ -100,52 +142,74 @@ fi
 for entry in "${TRACKERS[@]}"; do
   IFS='|' read -r name category pattern <<< "$entry"
 
-  matches=$(grep -rPln "${INCLUDE_FLAGS[@]}" "${EXCLUDE_FLAGS[@]}" \
+  # Get files containing this tracker
+  match_files=$(grep -rPln "${INCLUDE_FLAGS[@]}" "${EXCLUDE_FLAGS[@]}" \
     "$pattern" "$SCAN_DIR" 2>/dev/null || true)
 
-  [ -z "$matches" ] && continue
+  [ -z "$match_files" ] && continue
 
-  # Check each file for consent gating
   while IFS= read -r file; do
+    # Get line numbers of every tracker call in this file
+    tracker_lines=$(grep -nP "$pattern" "$file" 2>/dev/null | cut -d: -f1 || true)
+    [ -z "$tracker_lines" ] && continue
+
     gated=false
-    for cp in "${CONSENT_PATTERNS[@]}"; do
-      if grep -qiP "$cp" "$file" 2>/dev/null; then
-        gated=true
-        break
-      fi
-    done
+    matched_guard=""
+    matched_line=""
+
+    while IFS= read -r lnum; do
+      # Extract CONSENT_WINDOW lines ending at (and including) the tracker line
+      start=$(( lnum > CONSENT_WINDOW ? lnum - CONSENT_WINDOW : 1 ))
+      context=$(sed -n "${start},${lnum}p" "$file" 2>/dev/null || true)
+
+      for cp in "${CONSENT_GUARD_PATTERNS[@]}"; do
+        guard_hit=$(echo "$context" | grep -iP "$cp" 2>/dev/null | tail -1 || true)
+        if [ -n "$guard_hit" ]; then
+          gated=true
+          matched_guard="$cp"
+          matched_line=$(echo "$guard_hit" | sed 's/^[[:space:]]*//')
+          break 2
+        fi
+      done
+    done <<< "$tracker_lines"
 
     if [ "$FORMAT" = "text" ]; then
       if $gated; then
         echo -e "${GREEN}[GATED]${RESET}   ${BOLD}${name}${RESET} (${category})"
         echo -e "          ${file}"
-        echo -e "          ${GREEN}✓ Consent check detected in file${RESET}"
+        echo -e "          ${GREEN}✓ Consent guard found within ${CONSENT_WINDOW} lines of tracker call${RESET}"
+        echo -e "          ${GREEN}  Guard: $(echo "$matched_line" | cut -c1-80)${RESET}"
+        echo -e "          ${YELLOW}  ↳ Verify manually: guard must be conditional, not just declared${RESET}"
       else
         echo -e "${RED}[UNGATED]${RESET} ${BOLD}${name}${RESET} (${category})"
         echo -e "          ${file}"
-        echo -e "          ${RED}✗ No consent gate detected — loads unconditionally${RESET}"
+        echo -e "          ${RED}✗ No consent guard found in ${CONSENT_WINDOW} lines before tracker call${RESET}"
         FOUND=1
       fi
       echo ""
     else
-      echo "{\"tracker\":\"${name}\",\"category\":\"${category}\",\"file\":\"${file}\",\"gated\":${gated}}"
+      echo "{\"tracker\":\"${name}\",\"category\":\"${category}\",\"file\":\"${file}\",\"gated\":${gated},\"guard\":\"$(echo "${matched_line}" | sed 's/"/\\"/g' | head -c 120)\"}"
     fi
-  done <<< "$matches"
+  done <<< "$match_files"
 done
 
 if [ "$FORMAT" = "text" ]; then
-  echo "─────────────��────────────────────────────────────────"
+  echo "──────────────────────────────────────────────────────"
   if [ "$FOUND" -eq 0 ]; then
-    echo -e "${GREEN}✓ All detected trackers appear to be consent-gated.${RESET}"
+    echo -e "${GREEN}✓ All detected trackers have a consent guard in the preceding ${CONSENT_WINDOW} lines.${RESET}"
+    echo -e "${YELLOW}  Reminder: [GATED] is a heuristic. Verify each marked result is truly conditional.${RESET}"
   else
-    echo -e "${RED}✗ Ungated trackers detected — these load before user consent.${RESET}"
+    echo -e "${RED}✗ Ungated trackers detected — no consent guard found before tracker call.${RESET}"
     echo ""
-    echo "This violates:"
+    echo "This may violate:"
     echo "  • GDPR Art. 6(1)(a) — consent required before non-essential cookies"
     echo "  • LGPD Art. 8 — consent must be specific and prior to processing"
     echo "  • ePrivacy Directive — prior consent for analytics cookies"
     echo ""
     echo "See: cookbook/analytics-consent-gating.md for remediation patterns"
+    echo ""
+    echo -e "${YELLOW}Note: [UNGATED] means no consent guard was found within ${CONSENT_WINDOW} lines.${RESET}"
+    echo -e "${YELLOW}The tracker may still be gated at a higher scope — investigate before filing a finding.${RESET}"
   fi
 fi
 

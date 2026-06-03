@@ -152,7 +152,7 @@ grep -rPn --include="*.py" --include="*.ts" --include="*.js" \
 
 # Check for structured logging that might include user objects
 grep -rPn --include="*.py" \
-  'logger\.\(info\|debug\|error\).*\buser\b.*=' \
+  'logger\.(info|debug|error).*\buser\b.*=' \
   . 2>/dev/null
 ```
 
@@ -1251,7 +1251,24 @@ useEffect(() => {
 
 ## Phase 6 — Report Generation
 
-Write the full audit report to `docs/privacy-audit.md` (or `docs/plans/privacy-audit.md` if that directory exists). The report must follow this structure:
+> **Security warning — read before writing the report.**
+> The audit report will contain a complete inventory of every PII field in the
+> database, all security findings (unencrypted fields, missing auth, public
+> buckets), third-party processor relationships, and known gaps in the deletion
+> pipeline. **This document is a roadmap for attackers if it leaks.**
+>
+> Before writing the report:
+> 1. Add `docs/privacy-audit.md` (or your chosen path) to `.gitignore` so it is
+>    never committed to the repository.
+> 2. Consider writing the report outside the working tree entirely:
+>    `~/privacy-audit-$(date +%Y-%m-%d).md`
+> 3. Store the final report in a private, access-controlled location (encrypted
+>    drive, internal wiki with ACLs, or a secrets manager document store) —
+>    never in a public repo, a shared Google Doc with broad access, or a CI
+>    artifact with public visibility.
+> 4. Treat the report under the same access controls as production credentials.
+
+Write the full audit report to `docs/privacy-audit.md` (or `docs/plans/privacy-audit.md` if that directory exists). **Remind the user to add this path to `.gitignore` before the report is written.** The report must follow this structure:
 
 ```markdown
 # Privacy Engineering Audit Report

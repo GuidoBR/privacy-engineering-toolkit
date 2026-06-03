@@ -4,11 +4,14 @@ generate-data-inventory.py — auto-generate a first-draft data inventory CSV
 from ORM model definitions in your codebase.
 
 Supports:
-  • SQLAlchemy (Python) — Column() definitions in models.py / database.py
+  • SQLAlchemy (Python) — Column() / mapped_column() definitions
   • Django ORM (Python) — models.Model subclasses
   • Prisma (TypeScript/JavaScript) — schema.prisma
   • TypeORM (TypeScript) — @Entity / @Column decorators
   • ActiveRecord (Ruby) — migration add_column / create_table
+
+Classification follows the CISSP five-tier commercial model:
+  Sensitive > Confidential > Private > Proprietary > Public
 
 Usage:
   python3 scripts/generate-data-inventory.py [directory] [--output FILE]
@@ -27,21 +30,35 @@ from pathlib import Path
 from typing import Optional
 
 
-# ── PII heuristics ────────────────────────────────────────────────────────────
+# ── PII heuristics (CISSP five-tier) ─────────────────────────────────────────
+#
+# Sensitive   — most limited access; greatest damage to org/individual if disclosed
+# Confidential— causes damage if disclosed externally; restricted within company
+# Private     — compartmental; must be kept private for legal/ethical reasons
+# Proprietary — competitive advantage; limited external disclosure
+# Public      — least sensitive; least harm if disclosed
 
-CRITICAL_PATTERNS = [
-    r'\bssn\b', r'\bsin\b', r'\bcpf\b', r'\bcnpj\b', r'\btax_id\b', r'\btin\b',
+SENSITIVE_PATTERNS = [
+    # Government / tax identifiers
+    r'\bssn\b', r'\bsin\b', r'\bcpf\b', r'\btax_id\b', r'\btin\b',
     r'\bpassport\b', r'\bdrivers?_licen[cs]e\b',
+    # Payment / financial
     r'\bcredit_card\b', r'\bcard_number\b', r'\bcvv\b', r'\bcvc\b',
     r'\biban\b', r'\brouting_number\b', r'\baccount_number\b',
+    # Biometric (GDPR Art. 9 / LGPD Art. 11)
     r'\bbiometric\b', r'\bfingerprint\b', r'\bface_id\b', r'\bretina\b',
     r'\bsignature_image\b', r'\bsignature_data\b',
+    # Health / genetic (GDPR Art. 9 / LGPD Art. 11)
     r'\bhealth\b', r'\bmedical\b', r'\bdiagnosis\b', r'\bprescription\b',
     r'\bgenetic\b', r'\bdna\b',
+    # Special categories (GDPR Art. 9 / LGPD Art. 11)
+    r'\brace\b', r'\bethnicity\b', r'\breligion\b', r'\bpolitical\b',
+    r'\bsexual_orientation\b',
+    # Auth secrets
     r'\bpassword\b', r'\bpassword_hash\b', r'\bpwd\b',
 ]
 
-HIGH_PATTERNS = [
+CONFIDENTIAL_PATTERNS = [
     r'\bemail\b', r'\be_mail\b',
     r'\bphone\b', r'\bmobile\b', r'\bcell\b', r'\btelephone\b',
     r'\bfull_name\b', r'\blegal_name\b', r'\bfirst_name\b', r'\blast_name\b',
@@ -53,56 +70,65 @@ HIGH_PATTERNS = [
     r'\bgps\b', r'\blatitude\b', r'\blongitude\b', r'\bgeo\b', r'\blocation\b',
     r'\bdate_of_birth\b', r'\bdob\b', r'\bbirthdate\b', r'\bbirthday\b',
     r'\bsex\b', r'\bgender\b',
-    r'\brace\b', r'\bethnicity\b', r'\bnationality\b',
-    r'\breligion\b', r'\bpolitical\b',
-    r'\bsexual_orientation\b',
+    r'\bnationality\b',
     r'\btoken\b', r'\bauth_token\b', r'\baccess_token\b', r'\brefresh_token\b',
-    r'\bapi_key\b', r'\bsecret\b',
     r'\bsignature\b', r'\bsigned\b',
     r'\bw9\b', r'\btax_form\b',
 ]
 
-MEDIUM_PATTERNS = [
+PRIVATE_PATTERNS = [
     r'\busername\b', r'\buser_name\b', r'\bhandle\b',
     r'\bcity\b', r'\bstate\b', r'\bcountry\b', r'\bregion\b',
     r'\bpurchase\b', r'\border\b', r'\btransaction\b',
     r'\bpayment_method\b', r'\bpayment_option\b',
     r'\bsession_id\b', r'\bcookie\b',
     r'\btrack\b', r'\bactivity\b', r'\bbehavior\b',
-    r'\bnotes?\b', r'\bcomments?\b', r'\bdescription\b',  # may contain PII
+    r'\bnotes?\b', r'\bcomments?\b', r'\bdescription\b',  # free-text may contain PII
     r'\bprofile\b', r'\bavatar\b', r'\bphoto\b', r'\bimage\b',
 ]
 
+PROPRIETARY_PATTERNS = [
+    r'\bapi_key\b', r'\bsecret\b', r'\bprivate_key\b',
+    r'\bencryption_key\b', r'\bfernet_key\b',
+]
+
+# Anything that matches none of the above is classified Public.
+
 LEGAL_BASIS_SUGGESTIONS = {
-    'CRITICAL': 'Explicit consent (Art. 9 GDPR / Art. 11 LGPD) or legal obligation',
-    'HIGH':     'Consent, contract, or legitimate interest (GDPR Art. 6 / LGPD Art. 7)',
-    'MEDIUM':   'Contract or legitimate interest (GDPR Art. 6(1)(b)/(f) / LGPD Art. 7)',
-    'LOW':      'Legitimate interest or contract performance',
+    'Sensitive':     'Explicit consent (GDPR Art. 9 / LGPD Art. 11) or legal obligation',
+    'Confidential':  'Consent, contract, or legitimate interest (GDPR Art. 6 / LGPD Art. 7)',
+    'Private':       'Contract or legitimate interest (GDPR Art. 6(1)(b)/(f) / LGPD Art. 7)',
+    'Proprietary':   'Legitimate interest — internal use only; no external disclosure',
+    'Public':        'Legitimate interest or contract performance',
 }
 
 RETENTION_SUGGESTIONS = {
-    'CRITICAL': 'Define minimal retention; delete on account closure; document legal hold exceptions',
-    'HIGH':     'Define retention per purpose; anonymise or delete when purpose expires',
-    'MEDIUM':   'Define retention; review annually',
-    'LOW':      'Standard operational retention',
+    'Sensitive':     'Define minimal retention; delete or crypto-shred on account closure; document legal hold exceptions',
+    'Confidential':  'Define retention per purpose; anonymise or delete when purpose expires',
+    'Private':       'Define retention; review annually',
+    'Proprietary':   'Rotate/revoke on role change or termination; do not log',
+    'Public':        'Standard operational retention',
 }
 
 
 def classify_field(field_name: str) -> str:
     name = field_name.lower()
-    for pat in CRITICAL_PATTERNS:
+    for pat in SENSITIVE_PATTERNS:
         if re.search(pat, name):
-            return 'CRITICAL'
-    for pat in HIGH_PATTERNS:
+            return 'Sensitive'
+    for pat in CONFIDENTIAL_PATTERNS:
         if re.search(pat, name):
-            return 'HIGH'
-    for pat in MEDIUM_PATTERNS:
+            return 'Confidential'
+    for pat in PRIVATE_PATTERNS:
         if re.search(pat, name):
-            return 'MEDIUM'
-    return 'LOW'
+            return 'Private'
+    for pat in PROPRIETARY_PATTERNS:
+        if re.search(pat, name):
+            return 'Proprietary'
+    return 'Public'
 
 
-# ── parsers ────���──────────────────────��───────────────────────────────────────
+# ── parsers ───────────────────────────────────────────────────────────────────
 
 @dataclass
 class FieldRecord:
@@ -110,7 +136,7 @@ class FieldRecord:
     table: str
     field: str
     data_type: str
-    sensitivity: str
+    classification: str
     pii_category: str
     legal_basis: str
     encrypted: str
@@ -118,7 +144,7 @@ class FieldRecord:
     notes: str = ''
 
 
-def pii_category_label(sensitivity: str, field_name: str) -> str:
+def pii_category_label(classification: str, field_name: str) -> str:
     name = field_name.lower()
     if any(re.search(p, name) for p in [r'\bemail\b']):
         return 'Email address'
@@ -129,21 +155,27 @@ def pii_category_label(sensitivity: str, field_name: str) -> str:
     if any(re.search(p, name) for p in [r'\baddress\b', r'\bstreet\b', r'\bzip\b', r'\bpostal\b']):
         return 'Physical address'
     if any(re.search(p, name) for p in [r'\bssn\b', r'\bcpf\b', r'\btax_id\b', r'\btin\b']):
-        return 'Government/tax ID — CRITICAL'
-    if any(re.search(p, name) for p in [r'\bpassword\b', r'\btoken\b', r'\bsecret\b', r'\bapi_key\b']):
+        return 'Government/tax ID (Sensitive)'
+    if any(re.search(p, name) for p in [r'\bpassword\b', r'\btoken\b']):
         return 'Auth credential'
+    if any(re.search(p, name) for p in [r'\bapi_key\b', r'\bsecret\b', r'\bprivate_key\b']):
+        return 'API key / secret (Proprietary)'
     if any(re.search(p, name) for p in [r'\bsignature\b', r'\bbiometric\b', r'\bfingerprint\b']):
         return 'Biometric data (GDPR Art. 9 / LGPD Art. 11)'
     if any(re.search(p, name) for p in [r'\bhealth\b', r'\bmedical\b', r'\bdiagnosis\b']):
         return 'Health data (GDPR Art. 9 / LGPD Art. 11)'
+    if any(re.search(p, name) for p in [r'\brace\b', r'\bethnicity\b', r'\breligion\b', r'\bpolitical\b', r'\bsexual_orientation\b']):
+        return 'Special category (GDPR Art. 9 / LGPD Art. 11)'
     if any(re.search(p, name) for p in [r'\bip_address\b', r'\bip_addr\b', r'\buser_agent\b']):
         return 'Online identifier'
     if any(re.search(p, name) for p in [r'\blocation\b', r'\bgps\b', r'\blatitude\b', r'\blongitude\b']):
         return 'Geolocation'
-    if sensitivity in ('CRITICAL', 'HIGH'):
+    if classification in ('Sensitive', 'Confidential'):
         return 'Personal data'
-    if sensitivity == 'MEDIUM':
-        return 'Potentially personal'
+    if classification == 'Private':
+        return 'Potentially personal / compartmental'
+    if classification == 'Proprietary':
+        return 'Business-confidential'
     return 'Non-personal / operational'
 
 
@@ -158,17 +190,17 @@ def is_encrypted_hint(field_name: str, field_type: str) -> str:
 
 
 def make_record(source_file: str, table: str, field: str, data_type: str) -> FieldRecord:
-    sensitivity = classify_field(field)
+    classification = classify_field(field)
     return FieldRecord(
         source_file=source_file,
         table=table,
         field=field,
         data_type=data_type,
-        sensitivity=sensitivity,
-        pii_category=pii_category_label(sensitivity, field),
-        legal_basis=LEGAL_BASIS_SUGGESTIONS[sensitivity],
+        classification=classification,
+        pii_category=pii_category_label(classification, field),
+        legal_basis=LEGAL_BASIS_SUGGESTIONS[classification],
         encrypted=is_encrypted_hint(field, data_type),
-        retention_policy=RETENTION_SUGGESTIONS[sensitivity],
+        retention_policy=RETENTION_SUGGESTIONS[classification],
     )
 
 
@@ -178,7 +210,6 @@ def parse_sqlalchemy(path: Path) -> list[FieldRecord]:
     records = []
     content = path.read_text(errors='replace')
 
-    # Find class definitions that look like DB models
     class_blocks = re.split(r'\nclass\s+', content)
     for block in class_blocks[1:]:
         class_match = re.match(r'(\w+)\s*\(', block)
@@ -186,11 +217,9 @@ def parse_sqlalchemy(path: Path) -> list[FieldRecord]:
             continue
         class_name = class_match.group(1)
 
-        # Derive table name from __tablename__ or snake_case class name
         tn_match = re.search(r'__tablename__\s*=\s*[\'"]([^\'"]+)[\'"]', block)
         table = tn_match.group(1) if tn_match else re.sub(r'(?<!^)(?=[A-Z])', '_', class_name).lower()
 
-        # Find Column definitions
         for col_match in re.finditer(
             r'(\w+)\s*(?::\s*\w+\s*)?=\s*(?:mapped_column|Column)\s*\(\s*([^,)]+)',
             block
@@ -204,7 +233,7 @@ def parse_sqlalchemy(path: Path) -> list[FieldRecord]:
     return records
 
 
-# ── Django ORM parser ──────────────���──────────────────────────────────────────
+# ── Django ORM parser ─────────────────────────────────────────────────────────
 
 DJANGO_FIELD_RE = re.compile(
     r'^\s{4}(\w+)\s*=\s*models\.(\w+Field[^(]*)\(',
@@ -281,10 +310,8 @@ def parse_typeorm(path: Path) -> list[FieldRecord]:
 def parse_activerecord(path: Path) -> list[FieldRecord]:
     records = []
     content = path.read_text(errors='replace')
-    # create_table "users" do / add_column :users, :email
     for tbl_match in re.finditer(r'create_table\s+[\'"](\w+)[\'"]', content):
         table = tbl_match.group(1)
-        # Find the block following create_table
         start = tbl_match.end()
         end = content.find('end', start)
         block = content[start:end] if end != -1 else content[start:start+2000]
@@ -300,7 +327,7 @@ def parse_activerecord(path: Path) -> list[FieldRecord]:
     return records
 
 
-# ── file routing ───��──────────────────────────────────────────────────────────
+# ── file routing ──────────────────────────────────────────────────────────────
 
 def parse_file(path: Path) -> list[FieldRecord]:
     name = path.name.lower()
@@ -328,7 +355,7 @@ def parse_file(path: Path) -> list[FieldRecord]:
 
 HEADERS = [
     'Source File', 'Table / Model', 'Field', 'Data Type',
-    'Sensitivity', 'PII Category', 'Legal Basis (suggested)',
+    'Classification', 'PII Category', 'Legal Basis (suggested)',
     'Encrypted?', 'Retention Policy (suggested)', 'Notes'
 ]
 
@@ -339,26 +366,27 @@ def write_csv(records: list[FieldRecord], output) -> None:
     for r in records:
         writer.writerow([
             r.source_file, r.table, r.field, r.data_type,
-            r.sensitivity, r.pii_category, r.legal_basis,
+            r.classification, r.pii_category, r.legal_basis,
             r.encrypted, r.retention_policy, r.notes
         ])
 
 
 def write_markdown(records: list[FieldRecord], output) -> None:
     output.write('# Data Inventory\n\n')
-    output.write('> Auto-generated by `scripts/generate-data-inventory.py`. Review and complete each row.\n\n')
+    output.write('> Auto-generated by `scripts/generate-data-inventory.py`. Review and complete each row.\n')
+    output.write('> Classification uses the CISSP five-tier model: Sensitive · Confidential · Private · Proprietary · Public\n\n')
     output.write('| ' + ' | '.join(HEADERS) + ' |\n')
     output.write('|' + '---|' * len(HEADERS) + '\n')
     for r in records:
         row = [
             r.source_file, r.table, r.field, r.data_type,
-            r.sensitivity, r.pii_category, r.legal_basis,
+            r.classification, r.pii_category, r.legal_basis,
             r.encrypted, r.retention_policy, r.notes
         ]
         output.write('| ' + ' | '.join(row) + ' |\n')
 
 
-# ── main ────────────────────────────────────��─────────────────────────────────
+# ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -382,9 +410,9 @@ def main():
         if path.is_file() and not any(part in SKIP_DIRS for part in path.parts):
             records.extend(parse_file(path))
 
-    # Sort by sensitivity then table
-    order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3}
-    records.sort(key=lambda r: (order.get(r.sensitivity, 9), r.table, r.field))
+    # Sort by classification tier then table
+    order = {'Sensitive': 0, 'Confidential': 1, 'Private': 2, 'Proprietary': 3, 'Public': 4}
+    records.sort(key=lambda r: (order.get(r.classification, 9), r.table, r.field))
 
     if args.output:
         out_path = Path(args.output)
@@ -403,13 +431,17 @@ def main():
             write_csv(records, out)
         print(out.getvalue())
 
-    # Summary
     from collections import Counter
-    counts = Counter(r.sensitivity for r in records)
-    print(f"\nSummary: {counts.get('CRITICAL',0)} CRITICAL  "
-          f"{counts.get('HIGH',0)} HIGH  "
-          f"{counts.get('MEDIUM',0)} MEDIUM  "
-          f"{counts.get('LOW',0)} LOW", file=sys.stderr)
+    counts = Counter(r.classification for r in records)
+    print(
+        f"\nSummary: "
+        f"{counts.get('Sensitive', 0)} Sensitive  "
+        f"{counts.get('Confidential', 0)} Confidential  "
+        f"{counts.get('Private', 0)} Private  "
+        f"{counts.get('Proprietary', 0)} Proprietary  "
+        f"{counts.get('Public', 0)} Public",
+        file=sys.stderr
+    )
 
 
 if __name__ == '__main__':
