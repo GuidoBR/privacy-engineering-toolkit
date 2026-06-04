@@ -112,243 +112,121 @@ For every table/collection/model found, build this inventory. Classify every fie
 
 ### 2B. Logging Audit
 
-Run these grep patterns against all backend source files. Each match is a potential GDPR Art. 32 / LGPD Art. 46 violation:
+Run the dedicated script. It handles test-path exclusion, multi-language patterns, and SARIF output — do not substitute ad-hoc greps, which will produce false positives from test fixtures and miss structured-logger patterns.
 
 ```bash
-# Find PII in logger calls (Python — loguru/logging)
-grep -rPn --include="*.py" \
-  'log(ger)?\.(debug|info|warning|error|exception|critical)\(.*\{[^}]*(email|phone|password|token(?!_id|_ref|_hash)|ssn|cpf|cnpj|address|name|ip_addr)[^}]*\}' \
-  src/ 2>/dev/null
+# Standard mode — Python, JS/TS, Go, Java, Ruby
+scripts/scan-pii-logs.sh --dir . --format json > /tmp/pii-log-findings.json
 
-# Find PII in logger calls (JavaScript/TypeScript)
-grep -rPn --include="*.ts" --include="*.js" --include="*.tsx" \
-  'console\.(log|error|warn|info|debug).*\$\{[^}]*(email|phone|password|token(?!Id|Ref|Hash)|address|name)\}' \
-  src/ 2>/dev/null
+# Strict mode adds medium-confidence patterns (usernames, IPs, full names)
+scripts/scan-pii-logs.sh --dir . --format json --strict >> /tmp/pii-log-findings.json
 
-# Find PII in logger calls (Go)
-grep -rPn --include="*.go" \
-  'log\.(Print|Fatal|Panic|Error|Warn|Info|Debug).*[^_](email|phone|password|address|name)' \
-  . 2>/dev/null
-
-# Find HTTP request body logging (any language) — extremely dangerous
-grep -rPn --include="*.py" --include="*.ts" --include="*.js" --include="*.go" \
-  'log.*request\.body\|log.*req\.body\|log.*request\.data\|log.*payload' \
-  . 2>/dev/null
-
-# Find password/secret logging
-grep -rPn --include="*.py" --include="*.ts" --include="*.js" \
-  'log.*password\|print.*password\|console.*password' \
-  . 2>/dev/null
-
-# Find raw token logging (not hashed)
-grep -rPn --include="*.py" \
-  'log.*\btoken\b.*[:=].*[a-zA-Z0-9+/=]\{20,\}' \
-  . 2>/dev/null
-
-# Check if Sentry/error trackers capture PII
-grep -rPn --include="*.py" --include="*.ts" --include="*.js" \
-  'sentry.*capture\|Sentry\.setUser\|Sentry\.setExtra' \
-  . 2>/dev/null
-
-# Check for structured logging that might include user objects
-grep -rPn --include="*.py" \
-  'logger\.(info|debug|error).*\buser\b.*=' \
-  . 2>/dev/null
+# For SARIF upload to GitHub Code Scanning:
+scripts/scan-pii-logs.sh --dir . --format sarif > pii-logs.sarif
 ```
 
-**Checks for log infrastructure:**
-- Are CloudWatch/Datadog/ELK log groups configured with a retention period? (GDPR Art. 5(1)(e) — storage limitation)
-- Are logs encrypted at rest? (GDPR Art. 32)
-- Who has access to production logs? (GDPR Art. 32 — access controls)
-- Is there a scrubbing/redaction layer before logs are written?
+Interpret `/tmp/pii-log-findings.json`: for each finding, report the file, line, severity, and the log call that leaked PII. Group by severity. Add to the Findings section of the report.
+
+**Checks for log infrastructure** (these require reading IaC files — see Phase 2C which runs `scan-iac.py`):
+- CloudWatch/Datadog/ELK log groups configured with a retention period (GDPR Art. 5(1)(e))
+- Logs encrypted at rest (GDPR Art. 32)
+- Is there a scrubbing/redaction layer before logs are written? — grep for `PIIScrubberFilter`, `redact`, `scrub`, `pino.redact`, `serializers` in logger config files.
 
 ---
 
 ### 2C. Infrastructure Audit
 
-For each IaC file found, check:
+Run the dedicated script. It parses Terraform (.tf), CloudFormation (.yml/.json), and CDK TypeScript and evaluates binary flags deterministically — encryption, public access, log retention, key rotation, PITR, autovacuum, security group rules, IAM wildcards. Do not substitute ad-hoc grep; the script handles nesting, multi-resource relationships (e.g. S3 bucket + public-access-block), and outputs structured findings.
 
-**Database (RDS/Aurora/Cloud SQL/DocumentDB):**
-```
-☐ encryption at rest enabled (storageEncrypted / disk_encryption)
-☐ encryption in transit enforced (ssl_enforcement_enabled / require_ssl)
-☐ not publicly accessible (publiclyAccessible: false / publicly_accessible = false)
-☐ inside private VPC/subnet
-☐ credentials in secrets manager (not hardcoded, not in env vars)
-☐ automated backups enabled with retention period documented
-☐ deletion protection enabled in production
-☐ data classification tag present
-☐ point-in-time recovery enabled (for GDPR Art. 32 / LGPD Art. 46 breach recovery)
+```bash
+# Scan the entire repo for IaC files
+python3 scripts/scan-iac.py . --format json > /tmp/iac-findings.json
+
+# Text output for interactive review
+python3 scripts/scan-iac.py . --format text
+
+# SARIF for GitHub Code Scanning upload
+python3 scripts/scan-iac.py . --format sarif > iac.sarif
 ```
 
-**Object storage (S3/GCS/Azure Blob):**
-```
-☐ block all public access enabled
-☐ encryption at rest (SSE-S3, SSE-KMS, or CMEK)
-☐ enforce SSL / deny HTTP requests
-☐ versioning enabled (for audit trail / right-to-erasure verification)
-☐ lifecycle rules set with documented retention periods
-☐ access logging enabled
-☐ bucket policy restricts access (no wildcard Principal)
-☐ W-9/identity documents bucket separate from general assets
-☐ data classification tag present
-```
+Interpret `/tmp/iac-findings.json`: for each finding, record severity, rule_id, title, detail, file, line, and the regulation it violates. Add CRITICAL and HIGH findings to the report's Findings section. Group MEDIUM findings under "Infrastructure — Recommended Improvements."
 
-**Authentication service (Cognito/Auth0/Firebase):**
-```
-☐ MFA available or enforced
-☐ password policy meets NIST SP 800-63B (12+ chars, symbols, no common passwords)
-☐ account recovery is secure (email only, not SMS — SIM-swap risk)
-☐ JWT token expiry is short (access: ≤1hr, refresh: ≤30d)
-☐ audit logging enabled for auth events
-☐ what user attributes are collected? (each is PII under GDPR Art. 4(1))
-```
+**What `scan-iac.py` checks (by resource type):**
 
-**Key Management:**
-```
-☐ KMS/Cloud KMS used for encryption keys (not hardcoded Fernet/AES keys)
-☐ key rotation enabled
-☐ encryption key access restricted to necessary principals only
-☐ FERNET_KEY / ENCRYPTION_KEY not in .env.example, CI env, or git history
-```
+| Resource | Checks |
+|---|---|
+| RDS / Aurora | Encryption at rest, publicly_accessible, backup retention, deletion protection |
+| RDS parameter group | autovacuum_enabled not disabled (MVCC dead-tuple risk) |
+| S3 bucket | aws_s3_bucket_public_access_block present with all 4 flags true; encryption config present |
+| CloudWatch LogGroup | retention_in_days set and non-zero; kms_key_id set |
+| KMS Key | enable_key_rotation true |
+| SQS Queue | kms_master_key_id or sqs_managed_sse_enabled set |
+| DynamoDB | server_side_encryption enabled; point_in_time_recovery enabled |
+| Security Group | No 0.0.0.0/0 on DB ports (5432, 3306, 1433, 27017, 6379) |
+| IAM Policy | No wildcard Action: "*" |
+| CDK constructs | Same checks via proximity search in TypeScript CDK files |
+| CI/CD YAML | Hardcoded secrets; checkov --soft-fail; trivy exit-code: 0 |
 
-**Network:**
-```
-☐ database only reachable from within VPC
-☐ no public IPs on application servers (only load balancer)
-☐ security groups follow least-privilege (not 0.0.0.0/0 on database ports)
-☐ TLS 1.2+ enforced everywhere (TLS 1.0/1.1 disabled)
-☐ WAF in place for public endpoints
-```
+**Checks `scan-iac.py` does NOT cover** (require LLM judgment or manual review):
+- Credentials in secrets manager vs hardcoded in application config files — grep for `os.environ` / `process.env` alongside `password`, `secret` in non-IaC files
+- SSL enforcement in transit (application-level TLS config varies by framework)
+- WAF presence and configuration
+- Cognito user attributes collected (requires reading user pool definition and assessing PII scope)
+- CloudTrail enabled (check AWS console or use AWS CLI: `aws cloudtrail get-trail-status`)
+- IAM roles with MFA required (requires full IAM policy evaluation)
 
-**CloudWatch / Logging infrastructure:**
-```
-☐ log group retention periods set for ALL log groups
-☐ log groups encrypted (KMS key)
-☐ no PII in log group names or metric filter patterns
-☐ CloudTrail enabled for API call auditing
-☐ log access IAM policy is least-privilege
-```
+**PostgreSQL MVCC note** (for LLM synthesis — `scan-iac.py` checks autovacuum_enabled in parameter groups):
 
-**SQS/Pub/Sub/Kinesis (message queues):**
-```
-☐ encryption at rest (KMS)
-☐ dead-letter queue has same encryption
-☐ messages containing PII? → document retention and purge policy
-```
+PostgreSQL's MVCC mechanism means a DELETE does not immediately remove the tuple from disk. Dead tuples persist until AUTOVACUUM reclaims them. On high-write PII tables this means:
+- Physical data remains on disk after logical deletion
+- WAL archives retain pre-deletion row versions beyond the deletion date
 
-**DynamoDB / NoSQL:**
-```
-☐ encryption at rest (KMS-managed preferred over AWS-owned)
-☐ point-in-time recovery enabled
-☐ tables containing PII tagged accordingly
-```
-
-**PostgreSQL — MVCC and physical deletion lag:**
-```
-PostgreSQL's MVCC mechanism means that a DELETE statement does not immediately remove
-the tuple from disk. The old version persists until AUTOVACUUM reclaims it. On
-high-write PII tables, this creates dead tuples that:
-  (a) physically retain personal data on disk after logical deletion
-  (b) inflate table size and degrade I/O performance
-
-☐ AUTOVACUUM is not disabled on PII-heavy tables
-    Check: grep for 'autovacuum_enabled = false' in table DDL or Terraform RDS parameter groups
-☐ For bulk deletions (e.g. a large erasure batch), schedule an explicit VACUUM after:
-    VACUUM (VERBOSE, ANALYZE) users;
-☐ After deleting/anonymising a large user set, verify with:
-    SELECT n_dead_tup, last_autovacuum FROM pg_stat_user_tables WHERE relname = 'users';
-    Dead tuples > 0 after a bulk erasure = data still physically present on disk.
-☐ fillfactor on PII tables is not set so low that update/delete churn delays VACUUM
-☐ WAL (Write-Ahead Log) archiving retention is documented — WAL archives contain the
-    pre-deletion row versions and may persist beyond the logical deletion date.
-    Ensure WAL archive retention matches the backup retention policy, not indefinitely.
-```
-
-**IAM / Access Control:**
-```
-☐ no wildcard actions (*) on sensitive resources (S3 PII buckets, KMS, Cognito)
-☐ principle of least privilege: scope resource ARNs, not "*"
-☐ no inline policies attached directly to users
-☐ MFA required for privileged IAM roles
-☐ no long-lived IAM access keys in CI/CD (use OIDC/Workload Identity)
-```
+After any bulk erasure, the team should run: `VACUUM (VERBOSE, ANALYZE) users;` and verify with: `SELECT n_dead_tup, last_autovacuum FROM pg_stat_user_tables WHERE relname = 'users';`
 
 ---
 
 ### 2D. Backend API Audit
 
+Run the dedicated deletion-layer script first. It covers soft-delete gaps, orphaned FK references, ORM cascade bypass, event sourcing, and warehouse propagation — all deterministically, with test-path exclusions already applied.
+
 ```bash
-# Find endpoints that accept and store user data without apparent validation
-grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
-  '@(app|router)\.(post|put|patch).*\/(users|profile|account|signup|register)' \
-  . 2>/dev/null
+scripts/scan-soft-deletes.sh --dir . --format json > /tmp/soft-delete-findings.json
+```
 
-# Check for raw SQL queries that might not sanitize PII
-grep -rPn --include="*.py" \
-  'execute\(.*%s\|execute\(.*format\(' \
-  . 2>/dev/null
+Interpret `/tmp/soft-delete-findings.json`: severity HIGH = violation to report; MEDIUM = gap to remediate; LOW = verify manually. Add findings to the Findings section of the report. The script checks:
 
+| Check | Severity if gap found |
+|---|---|
+| Soft-delete (deleted_at / is_deleted) without companion anonymization | HIGH |
+| user_id / owner_id columns without FK constraint | MEDIUM |
+| Django `on_delete=DO_NOTHING` (no cascade at all) | HIGH |
+| Django/Rails app-layer cascade with no DB-level FK | MEDIUM |
+| Event sourcing (Kafka/Kinesis) without crypto shredding | HIGH |
+| Data warehouse (BigQuery/Redshift/dbt) without deletion propagation | HIGH |
+| Deletion code exists but no deletion_registry table | MEDIUM |
+
+**Additional API checks** (run these greps — they are not covered by a script):
+
+```bash
 # Find rate-limiting on sensitive endpoints
 grep -rPn --include="*.py" --include="*.ts" \
-  'rate.limit\|RateLimiter\|throttle\|slowDown' \
+  'rate.?limit|RateLimiter|throttle|slowDown' \
   . 2>/dev/null
 
-# Check for data export endpoints (high DSAR risk if unprotected)
+# Check for data export / bulk download endpoints (HIGH DSAR risk if unprotected)
 grep -rPn --include="*.py" --include="*.ts" \
-  'export\|download.*csv\|download.*excel\|bulk.*export' \
+  'export|download.*csv|download.*excel|bulk.*export' \
   . 2>/dev/null
 
-# Check if deleted_at soft-delete is used WITHOUT a real anonymisation/purge path
-grep -rPn --include="*.py" --include="*.rb" --include="*.ts" --include="*.go" \
-  'deleted_at\|soft.delete\|is_deleted\|archived_at' \
-  . 2>/dev/null
-# Then check whether a companion anonymisation query or scheduled purge exists:
-grep -rPn --include="*.py" --include="*.rb" --include="*.ts" \
-  'deletion_scheduled_for\|purge\|anonymis\|anonymiz\|redacted\.invalid\|@deleted' \
-  . 2>/dev/null
-
-# Detect orphaned-data risk: user_id/owner_id columns without a FK constraint
-# Step 1 — find columns that look like FK references to users
-grep -rPn --include="*.sql" --include="*.py" --include="*.rb" \
-  '\buser_id\b\|\bowner_id\b\|\bauthor_id\b\|\bcreated_by\b' \
-  . 2>/dev/null | grep -v 'ForeignKey\|REFERENCES\|references :user\|belongs_to' | head -40
-# Step 2 — confirm which of those have no FK defined
-grep -rPn --include="*.sql" \
-  'REFERENCES users\|REFERENCES "users"' \
-  . 2>/dev/null
-
-# Detect ORM cascade strategy — framework-specific risk
-# Django: on_delete lives in Python, bypassed by direct DB access
+# Check for raw SQL with string formatting (SQL injection / PII in query logs)
 grep -rPn --include="*.py" \
-  'on_delete=models\.\(CASCADE\|SET_NULL\|PROTECT\|DO_NOTHING\)' \
-  . 2>/dev/null
-# Rails: distinguish app-layer (:destroy/:delete_all) from DB-layer (add_foreign_key)
-grep -rPn --include="*.rb" \
-  'dependent: :destroy\|dependent: :delete_all\|add_foreign_key.*on_delete' \
-  . 2>/dev/null
-# Check for microservice / multi-service DB access patterns (bypass risk)
-grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
-  'engine\s*=\|createConnection\|knex\|db\.connect\|sql\.Open' \
-  . 2>/dev/null | grep -v 'test\|spec\|migration' | head -20
-
-# Detect event-sourcing / append-only architectures (require crypto shredding)
-grep -rPn --include="*.py" --include="*.ts" --include="*.go" --include="*.java" \
-  'KafkaProducer\|KinesisClient\|DynamoDBStreams\|EventStore\|event_store\|append_event\|EventBus\|outbox' \
-  . 2>/dev/null | head -20
-# Check whether crypto shredding (per-user encryption key destruction) is implemented
-grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
-  'crypto.shred\|shred_key\|destroy.*key\|delete.*encryption.*key\|kms.*delete\|KMSClient.*delete\|ScheduleKeyDeletion' \
+  'execute\(.*%s|execute\(.*\.format\(' \
   . 2>/dev/null
 
-# Detect data warehouse / analytics pipeline integrations (deletion rarely propagates)
-grep -rPn --include="*.py" --include="*.ts" --include="*.yml" --include="*.yaml" \
-  'bigquery\|redshift\|snowflake\|dbt\b\|fivetran\|airbyte\|stitch\|singer\b\|meltano' \
-  . 2>/dev/null | head -20
-# Check whether a deletion propagation path exists for the warehouse
-grep -rPn --include="*.py" --include="*.ts" \
-  'delete.*warehouse\|warehouse.*delete\|gdpr.*sync\|right.*erasure.*warehouse\|deletion.*propagat' \
-  . 2>/dev/null
+# Check for microservice / multi-service DB access (ORM cascade bypass risk)
+grep -rPn --include="*.py" --include="*.ts" --include="*.go" \
+  'engine\s*=|createConnection|knex\b|db\.connect|sql\.Open' \
+  . 2>/dev/null | grep -vP 'test|spec|migration' | head -20
 ```
 
 **Check for:**

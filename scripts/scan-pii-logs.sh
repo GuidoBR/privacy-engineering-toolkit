@@ -129,8 +129,16 @@ run_pattern() {
 
   local matches
   matches=$(grep -rPn "${include_flags[@]}" \
-    --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=dist \
-    --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=vendor \
+    --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=venv \
+    --exclude-dir=dist --exclude-dir=build --exclude-dir=.git \
+    --exclude-dir=__pycache__ --exclude-dir=vendor --exclude-dir=.next \
+    --exclude-dir=test --exclude-dir=tests --exclude-dir=spec \
+    --exclude-dir=specs --exclude-dir=__tests__ --exclude-dir=fixtures \
+    --exclude='*.test.py'  --exclude='*.spec.py' \
+    --exclude='*.test.ts'  --exclude='*.spec.ts' \
+    --exclude='*.test.js'  --exclude='*.spec.js' \
+    --exclude='*.test.tsx' --exclude='*.spec.tsx' \
+    --exclude='*_test.go'  --exclude='*_spec.rb' \
     "$pattern" "$SCAN_DIR" 2>/dev/null || true)
 
   if [ -z "$matches" ]; then
