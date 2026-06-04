@@ -1017,6 +1017,19 @@ CREATE UNIQUE INDEX idx_privacy_policies_current
     ON privacy_policies (purpose) WHERE is_current = TRUE;
 
 -- Per-user consent records (append-only — never update, only insert)
+--
+-- ON DELETE RESTRICT is intentional and must NOT be changed to CASCADE.
+--
+-- Why: consent records are the legal proof that processing was lawful
+-- (GDPR Art. 7(1) — burden of proof; LGPD Art. 8 §5). Deleting them when
+-- a user account is erased destroys that proof and is itself a compliance
+-- violation (GDPR Art. 17(3)(b) exempts records needed to defend legal claims).
+--
+-- How this works with the erasure flow (see Phase 5B):
+-- The deletion flow ANONYMISES the users row (email → deleted+id@deleted.invalid,
+-- name → 'DELETED') rather than DELETEing it. The row still exists, so
+-- RESTRICT is never triggered. Consent records remain intact and queryable
+-- by opaque user_id for regulatory audits. Do NOT change this to CASCADE.
 CREATE TABLE consent_records (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id       UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

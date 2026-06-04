@@ -88,6 +88,30 @@ declare -a PATTERNS=(
   # ── Ruby ─────────────────────────────────────────────────────────────────────
   "Email in Ruby log|CRITICAL|rb|Rails\.logger\.(debug|info|warn|error|fatal).*\bemail\b"
   "Password in Ruby log|CRITICAL|rb|Rails\.logger\.(debug|info|warn|error|fatal).*\bpassword\b"
+
+  # ── Structured loggers — Python ───────────────────────────────────────────────
+  # loguru: logger.bind(email=x, phone=x).info(...)
+  "PII in loguru bind()|CRITICAL|py|logger\.bind\([^)]*\b(email|phone|password|ssn|cpf|address|token)\b"
+  # structlog / stdlib extra={}: log.info("msg", email=x) or logging.info("msg", extra={"email": x})
+  "PII in structlog keyword arg|CRITICAL|py|(logger|log)\.(info|debug|warning|error|exception)\([^,)]+,\s*(email|phone|password|ssn|cpf|address)\s*="
+  "PII in logging extra dict|HIGH|py|logging\.(info|debug|warning|error)\(.*extra\s*=.*\b(email|phone|password|ssn|cpf)\b"
+  # Exception message forwarded directly to logger — may contain PII strings
+  "Exception str() forwarded to log|HIGH|py|logger\.(exception|error|warning)\(\s*str\s*\(\s*(e|exc|err|error|exception)\s*\)"
+  "f-string exception in log|HIGH|py|logger\.(exception|error|warning)\(f['\"].*\{(e|exc|err)\b"
+  # Django DB query logging at DEBUG — logs full SQL including parameter values
+  "Django DB query logging enabled|HIGH|py|django\.db\.backends.*['\"]LEVEL['\"]\s*:\s*['\"]DEBUG['\"]|logging\.getLogger\(['\"]django\.db"
+
+  # ── Structured loggers — Go (zap / zerolog) ───────────────────────────────────
+  # zap.String("email", x), zap.Any("password", x)
+  "PII field in zap log|CRITICAL|go|zap\.(String|Any|Reflect|Stringer|Binary)\s*\(\s*\"(email|phone|password|ssn|token|address|cpf)\""
+  # zerolog: log.Str("email", x).Msg() or log.With().Str("email", x)
+  "PII field in zerolog|CRITICAL|go|\.(Str|String|Interface|Any)\s*\(\s*\"(email|phone|password|ssn|token|address|cpf)\""
+
+  # ── Structured loggers — Node.js (pino) ──────────────────────────────────────
+  # pino child({ email }): creates a child logger with PII bound to every line
+  "PII in pino child logger|CRITICAL|ts,tsx,js,jsx|(logger|log)\.child\s*\(\s*\{[^}]*(email|phone|password|token|address|ssn)"
+  # pino without redact: passing object with PII field directly
+  "PII object passed to pino|HIGH|ts,tsx,js,jsx|(logger|log)\.(info|debug|warn|error|trace)\(\s*\{[^}]*(email|phone|password|token)\b"
 )
 
 # ── strict-only patterns (medium confidence) ─────────────────────────────────
@@ -96,6 +120,16 @@ declare -a STRICT_PATTERNS=(
   "Full name in Python log|MEDIUM|py|logger\.(debug|info|warning|error)\(.*\{[^}]*(full_name|first_name|last_name)\b[^}]*\}"
   "IP address in Python log|MEDIUM|py|logger\.(debug|info|warning|error)\(.*\{[^}]*(ip_address|client_ip|remote_addr)\b[^}]*\}"
   "Credit card in any log|CRITICAL|py,ts,js,rb,go|log.*\b(card_number|cc_number|credit_card|cvv|cvc)\b"
+  # ORM / framework query logging — logs full SQL with bound parameters
+  "SQLAlchemy echo mode enabled|MEDIUM|py|create_engine\(.*echo\s*=\s*True"
+  "Django DB logging in settings|MEDIUM|py|'django\.db\.backends'|\"django\.db\.backends\""
+  # Sentry / error tracker with PII context attached
+  "Sentry setUser with PII|MEDIUM|py,ts,tsx,js|Sentry\.(setUser|setExtra|setContext)\s*\(\s*\{[^}]*(email|name|username|phone|ip_address)"
+  "Sentry captureException with extra|MEDIUM|py,ts,tsx,js|Sentry\.captureException\(.*extra\s*=\s*\{[^}]*(email|phone|password|address)"
+  # pino serializers not redacting known PII fields
+  "pino missing req serializer redact|MEDIUM|ts,tsx,js|pino\s*\([^)]*(?!redact)"
+  # Winston format without PII scrubber
+  "Winston without PII scrubber|MEDIUM|ts,tsx,js|createLogger\s*\([^)]*(?!scrub|redact|pii)"
 )
 
 # ── JSON output helpers ─���─────────────────────────────────────────────────────

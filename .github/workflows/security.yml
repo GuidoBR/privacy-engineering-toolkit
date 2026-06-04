@@ -173,9 +173,10 @@ jobs:
             --skip-path .venv \
             --skip-path dist \
             --output sarif \
-            --output-file-path checkov-results.sarif \
-            --soft-fail \
-            || true
+            --output-file-path checkov-results.sarif
+          # --soft-fail removed: IaC security findings now block the build.
+          # If adopting this workflow on a repo with existing violations, run
+          # checkov locally first, fix or baseline findings, then remove this comment.
 
       - name: Upload SARIF
         if: always()
@@ -199,7 +200,7 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
-          exit-code: "0"  # set to 1 to block on CRITICAL/HIGH
+          exit-code: "1"  # blocks the build on CRITICAL or HIGH CVEs
 
       - name: Upload SARIF
         if: always()
