@@ -166,16 +166,65 @@ fi
 #
 # user_id / owner_id columns with no REFERENCES constraint accumulate orphan
 # PII silently after user deletion. The DB does not enforce cleanup.
+#
+# Scope: schema/model definition files only. user_id in an API handler,
+# service layer, serializer, or DTO is not an orphan risk — the FK lives in
+# the model file. Scanning application logic produces noise that trains
+# engineers to ignore this check. Each language uses a content filter to
+# confirm the file is a schema definition before flagging it.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Step 1: find columns that look like user FK references
-CANDIDATE_FILES=$(grep -rPln \
-  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
-  --include="*.sql" --include="*.py" --include="*.rb" \
-  '\buser_id\b|\bowner_id\b|\bauthor_id\b|\bcreated_by\b|\bupdated_by\b' \
+FK_PATTERN='\buser_id\b|\bowner_id\b|\bauthor_id\b|\bcreated_by\b|\bupdated_by\b'
+CANDIDATE_FILES=""
+
+# SQL: all SQL files are DDL/DML — inherently schema scope
+_sql=$(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  --include="*.sql" "$FK_PATTERN" "$SCAN_DIR" 2>/dev/null || true)
+CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"${_sql}"
+
+# Python: only files that also contain ORM column/model markers
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  if grep -qP 'Column\s*\(|mapped_column\s*\(|models\.Model\b|DeclarativeBase|declarative_base\s*\(' "$f" 2>/dev/null; then
+    CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
+  fi
+done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  --include="*.py" "$FK_PATTERN" "$SCAN_DIR" 2>/dev/null || true)
+
+# Ruby: migration files (path contains /migrate/) or schema.rb, or
+#        files that contain create_table / add_column (ActiveRecord DSL)
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  if echo "$f" | grep -qP '/migrate/|schema\.rb$'; then
+    CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
+  elif grep -qP 'create_table|add_column' "$f" 2>/dev/null; then
+    CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
+  fi
+done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  --include="*.rb" "$FK_PATTERN" "$SCAN_DIR" 2>/dev/null || true)
+
+# Prisma: all .prisma files are schema by definition
+_prisma=$(grep -rPln "${EXCLUDE_DIRS[@]}" \
+  --include="*.prisma" \
+  '\buser_id\b|\buserId\b|\bowner_id\b|\bownerId\b|\bauthorId\b|\bcreatedById\b|\bupdatedById\b' \
+  "$SCAN_DIR" 2>/dev/null || true)
+CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"${_prisma}"
+
+# TypeScript: only files with ORM entity decorators (@Entity, @Column, @ManyToOne)
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  if grep -qP '@Entity\b|@Column\b|@ManyToOne\b|@OneToMany\b|@JoinColumn\b' "$f" 2>/dev/null; then
+    CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
+  fi
+done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  --include="*.ts" \
+  '\buser_id\b|\buserId\b|\bownerId\b|\bauthorId\b|\bcreatedById\b' \
   "$SCAN_DIR" 2>/dev/null || true)
 
-# Step 2: for each file, check whether an FK declaration exists nearby
+# Deduplicate and strip blanks
+CANDIDATE_FILES=$(echo "$CANDIDATE_FILES" | grep -v '^$' | sort -u || true)
+
+# For each candidate schema file, check whether an FK declaration exists
 if [ -n "$CANDIDATE_FILES" ]; then
   while IFS= read -r file; do
     [ -z "$file" ] && continue
@@ -189,7 +238,6 @@ if [ -n "$CANDIDATE_FILES" ]; then
         fi
         ;;
       py)
-        # Django ForeignKey or SQLAlchemy ForeignKey
         if grep -qP 'ForeignKey\s*\(|models\.ForeignKey|relationship\s*\(' "$file" 2>/dev/null; then
           has_fk=true
         fi
@@ -199,13 +247,24 @@ if [ -n "$CANDIDATE_FILES" ]; then
           has_fk=true
         fi
         ;;
+      prisma)
+        if grep -qP '@relation\s*\(|references:\s*\[' "$file" 2>/dev/null; then
+          has_fk=true
+        fi
+        ;;
+      ts)
+        if grep -qP '@ManyToOne\b|@JoinColumn\b|@RelationId\b' "$file" 2>/dev/null; then
+          has_fk=true
+        fi
+        ;;
     esac
 
     if ! $has_fk; then
-      matching_lines=$(grep -nP '\buser_id\b|\bowner_id\b|\bauthor_id\b|\bcreated_by\b' "$file" 2>/dev/null | head -5 || true)
+      matching_lines=$(grep -nP '\buser_id\b|\buserId\b|\bowner_id\b|\bauthorId\b|\bcreated_by\b' \
+        "$file" 2>/dev/null | head -5 || true)
       emit_finding "MEDIUM" "orphaned-user-ref-no-fk" \
-        "user_id / owner_id column found without FK constraint" \
-        "Without REFERENCES users(id) ON DELETE CASCADE/SET NULL, these rows will accumulate orphan PII after user deletion. Add a DB-level FK constraint. Matching lines: $(echo "$matching_lines" | tr '\n' ' ' | cut -c1-200)" \
+        "Schema file has user_id / owner_id column with no FK constraint" \
+        "Without REFERENCES users(id) ON DELETE CASCADE/SET NULL, these rows accumulate orphan PII after user deletion. Add a DB-level FK constraint. Matching lines: $(echo "$matching_lines" | tr '\n' ' ' | cut -c1-200)" \
         "$file" \
         "GDPR Art. 17 / LGPD Art. 18(VI)"
     fi

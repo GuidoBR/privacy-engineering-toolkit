@@ -128,7 +128,21 @@ Is the data collected limited to what is strictly necessary?
 
 For each risk, assess likelihood (1–3) and impact (1–3). Score = likelihood × impact.
 
-| Risk | Description | Likelihood | Impact | Score | Level |
+**Likelihood scale:**
+| Value | Meaning |
+|---|---|
+| 1 — Unlikely | Controls in place; breach of this type has not occurred in this context |
+| 2 — Possible | Could occur despite controls; has occurred in similar contexts |
+| 3 — Likely | Expected to occur without additional measures; known vulnerability exists |
+
+**Impact scale:**
+| Value | Meaning |
+|---|---|
+| 1 — Minor | Temporary inconvenience; no lasting harm; no special category data affected |
+| 2 — Significant | Financial loss, reputational damage, or distress; some special category data |
+| 3 — Severe | Discrimination, identity theft, physical harm, or large-scale special category exposure |
+
+| Risk | Description | Likelihood (1–3) | Impact (1–3) | Score | Level |
 |---|---|---|---|---|---|
 | Unauthorised access / data breach | | 1/2/3 | 1/2/3 | | Low/Medium/High |
 | Accidental loss or destruction | | | | | |
@@ -141,7 +155,15 @@ For each risk, assess likelihood (1–3) and impact (1–3). Score = likelihood 
 | Special category data mishandled | | | | | |
 | Cross-border transfer without safeguard | | | | | |
 
-**Risk levels:** Low = 1–2 | Medium = 3–4 | High = 6–9
+**Risk levels and required actions:**
+
+| Score | Level | Required action |
+|---|---|---|
+| 1–2 | **Low** | Document; no additional measures required |
+| 3–4 | **Medium** | Define mitigation measure; DPO review required |
+| 6–9 | **High** | Mitigation mandatory; if residual risk remains High after mitigation → **Art. 36 prior consultation required** (see §6) |
+
+> **Note on score 5:** A 1–3 × 1–3 matrix produces possible scores of 1, 2, 3, 4, 6, and 9. Score 5 cannot occur. If a score of 5 appears, recheck the calculation.
 
 ### 5.2 Existing Controls
 
@@ -155,14 +177,39 @@ For each risk, assess likelihood (1–3) and impact (1–3). Score = likelihood 
 
 For each High or Medium risk, define a mitigation measure and owner:
 
-| Risk | Measure | Owner | Target Date | Residual Risk |
-|---|---|---|---|---|
-| | | | | Low/Medium/High |
+| Risk | Measure | Owner | Target Date | Residual Score | Residual Level |
+|---|---|---|---|---|---|
+| | | | | | Low/Medium/High |
 
-**If residual risk remains HIGH after mitigation**, prior consultation with the supervisory authority is required (GDPR Art. 36).
+### 6.1 Escalation Decision Gate
 
-- [ ] Residual risk is acceptable (no Art. 36 consultation needed)
-- [ ] Art. 36 consultation required — supervisory authority: _______
+> **GDPR Art. 36 and EDPB Guidelines WP248 rev.01** state that if the controller cannot find sufficient measures to reduce risks to an acceptable level (i.e., any residual risk remains **High — score ≥ 6**), it must consult the competent supervisory authority **before starting the processing**.
+>
+> Processing must not commence until either:
+> (a) all residual risks are reduced to Low (1–2) or Medium (3–4), **or**
+> (b) the supervisory authority has been consulted and has responded (Art. 36 gives the authority 8 weeks to respond, extendable to 14 weeks).
+
+**Step 1 — Check residual scores from the table above:**
+
+- [ ] **All residual risks are Low (1–2)** → Proceed. No Art. 36 consultation needed.
+- [ ] **One or more residual risks are Medium (3–4)** → Proceed, with DPO sign-off and documented acceptance of residual risk.
+- [ ] **One or more residual risks are High (≥ 6)** → **STOP. Art. 36 prior consultation is mandatory before processing begins.**
+
+**Step 2 — If Art. 36 consultation is required:**
+
+| Field | Value |
+|---|---|
+| Supervisory authority to consult | (Lead SA — determined by main establishment) |
+| Date consultation submitted | |
+| Reference / case number | |
+| SA response deadline | (8 weeks from receipt; up to 14 weeks if extended) |
+| SA response received | |
+| SA decision | Approved / Approved with conditions / Objected |
+| Conditions / restrictions imposed | |
+| Processing start date (after SA response) | |
+
+- [ ] Art. 36 consultation completed; SA has responded; conditions documented above
+- [ ] Residual risk is acceptable; processing may commence
 
 ---
 

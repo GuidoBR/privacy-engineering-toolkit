@@ -139,7 +139,21 @@ O tratamento limita-se ao mínimo necessário para a finalidade? Poderiam ser us
 
 Para cada risco, avalie probabilidade (1–3) e impacto (1–3). Pontuação = probabilidade × impacto.
 
-| Risco | Descrição | Probabilidade | Impacto | Pontuação | Nível |
+**Escala de probabilidade:**
+| Valor | Significado |
+|---|---|
+| 1 — Improvável | Controles implementados; este tipo de incidente não ocorreu neste contexto |
+| 2 — Possível | Pode ocorrer mesmo com controles; já ocorreu em contextos similares |
+| 3 — Provável | Esperado que ocorra sem medidas adicionais; vulnerabilidade conhecida existe |
+
+**Escala de impacto:**
+| Valor | Significado |
+|---|---|
+| 1 — Leve | Inconveniente temporário; sem dano duradouro; sem dados sensíveis afetados |
+| 2 — Significativo | Prejuízo financeiro, dano reputacional ou constrangimento; alguns dados sensíveis |
+| 3 — Grave | Discriminação, fraude de identidade, dano físico ou exposição em larga escala de dados sensíveis |
+
+| Risco | Descrição | Probabilidade (1–3) | Impacto (1–3) | Pontuação | Nível |
 |---|---|---|---|---|---|
 | Acesso não autorizado / vazamento | | 1/2/3 | 1/2/3 | | Baixo/Médio/Alto |
 | Perda ou destruição acidental | | | | | |
@@ -153,7 +167,13 @@ Para cada risco, avalie probabilidade (1–3) e impacto (1–3). Pontuação = p
 | Transferência internacional sem salvaguarda | | | | | |
 | Uso em tomada de decisão automatizada sem transparência | | | | | |
 
-**Níveis:** Baixo = 1–2 | Médio = 3–4 | Alto = 6–9
+**Níveis de risco e ações obrigatórias:**
+
+| Pontuação | Nível | Ação obrigatória |
+|---|---|---|
+| 1–2 | **Baixo** | Documentar; nenhuma medida adicional obrigatória |
+| 3–4 | **Médio** | Definir medida de mitigação; revisão do encarregado obrigatória |
+| 6–9 | **Alto** | Mitigação obrigatória; se risco residual permanecer Alto após mitigação → **consulta prévia à ANPD pode ser exigida** (ver §6) |
 
 ### 5.2 Controles Existentes
 
@@ -167,9 +187,35 @@ Para cada risco, avalie probabilidade (1–3) e impacto (1–3). Pontuação = p
 
 Para cada risco Médio ou Alto, defina medida de mitigação, responsável e prazo:
 
-| Risco | Medida | Responsável | Prazo | Risco Residual |
-|---|---|---|---|---|
-| | | | | Baixo/Médio/Alto |
+| Risco | Medida | Responsável | Prazo | Pontuação Residual | Nível Residual |
+|---|---|---|---|---|---|
+| | | | | | Baixo/Médio/Alto |
+
+### 6.1 Decisão de Escalada
+
+> **LGPD Art. 38 e orientações da ANPD:** O RIPD deve ser elaborado antes do início do tratamento de alto risco. Se após as medidas de mitigação algum risco residual permanecer **Alto (pontuação ≥ 6)**, a ANPD pode exigir a apresentação do RIPD e determinar medidas adicionais. Em casos de tratamento de dados sensíveis em larga escala ou tomada de decisão automatizada com impacto significativo, considere consultar a ANPD proativamente antes de iniciar o tratamento.
+>
+> Diferentemente do GDPR (Art. 36), a LGPD não estabelece um prazo fixo para consulta prévia obrigatória — a exigência é discricionária da ANPD. No entanto, o tratamento com risco residual Alto sem medidas adequadas caracteriza violação dos princípios de prevenção e segurança (LGPD Art. 6, VII e VIII).
+
+**Passo 1 — Verificar pontuações residuais da tabela acima:**
+
+- [ ] **Todos os riscos residuais são Baixos (1–2)** → Prosseguir. Nenhuma consulta à ANPD necessária.
+- [ ] **Um ou mais riscos residuais são Médios (3–4)** → Prosseguir com aprovação do encarregado e aceitação documentada do risco residual.
+- [ ] **Um ou mais riscos residuais são Altos (≥ 6)** → **ATENÇÃO. Implementar medidas adicionais ou consultar a ANPD antes de iniciar o tratamento.**
+
+**Passo 2 — Se consulta à ANPD for necessária ou recomendável:**
+
+| Campo | Valor |
+|---|---|
+| Data de envio à ANPD | |
+| Número de protocolo / referência | |
+| Resposta recebida em | |
+| Decisão da ANPD | Aprovado / Aprovado com condições / Objeção |
+| Condições / restrições impostas | |
+| Data de início do tratamento (após resposta) | |
+
+- [ ] Consulta à ANPD concluída; resposta e condições documentadas acima
+- [ ] Risco residual é aceitável; tratamento pode ser iniciado
 
 ---
 
