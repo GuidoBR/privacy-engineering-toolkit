@@ -1,7 +1,14 @@
 # PIPEDA — Personal Information Protection and Electronic Documents Act
 *S.C. 2000, c. 5 — Canada — Effective 1 January 2004 (full scope)*
 
-> **Note:** PIPEDA is being replaced by **Bill C-27 / CPPA** (Consumer Privacy Protection Act), which was tabled in 2022 and remains under review in Parliament as of 2025. Organisations should monitor its progress. This document covers current PIPEDA requirements.
+> **Last verified:** June 2026
+>
+> **Note:** PIPEDA is being replaced by **Bill C-27 / CPPA** (Consumer Privacy Protection Act), which was tabled in 2022 and remains under Parliamentary review. The CPPA would introduce GDPR-style consent requirements, a right to erasure, automated decision-making transparency, and significantly higher fines (up to C$25M or 5% of global revenue). As of June 2026 it has not yet received Royal Assent; monitor parl.ca for progress.
+>
+> **Quebec Law 25 (Act Respecting the Protection of Personal Information in the Private Sector) is now fully in force:**
+> - Phase 1 (September 2022): Breach notification to Commission d'accès à l'information (CAI) and affected individuals; privacy incident register required.
+> - Phase 2 (September 2023): Privacy impact assessments (PIAs) required before certain technology projects; explicit consent for sensitive data; right to data portability; right to erasure; automated decision-making transparency; privacy by design obligation; 72-hour breach notification to CAI (significant breaches); DPO required.
+> - Phase 3 (September 2023 — same cohort): Fines up to C$25M or 4% of worldwide turnover. Quebec Law 25 is currently the strictest Canadian privacy regime — closer to GDPR than PIPEDA. Companies with Quebec users must comply.
 
 ## Overview
 

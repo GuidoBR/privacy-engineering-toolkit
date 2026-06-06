@@ -1,6 +1,14 @@
 # GDPR — General Data Protection Regulation
 *EU 2016/679 — Effective 25 May 2018*
 
+> **Last verified:** June 2026
+>
+> **Known pending changes and active risks:**
+> - **EU-US Data Privacy Framework (DPF):** Adequacy decision adopted July 2023. noyb (Max Schrems) filed a challenge before the CJEU in August 2023; a ruling is expected 2025–2026. Companies relying solely on DPF for US transfers carry transfer invalidation risk. Consider SCCs as a parallel safeguard.
+> - **ePrivacy Regulation:** Long-delayed replacement for the ePrivacy Directive (Cookie Law) remains in trilogue as of 2026. Current rules still derive from the 2002/2009 Directive.
+> - **AI Act (EU 2024/1689):** Effective August 2024, with phased obligations. High-risk AI systems that process personal data have additional transparency and documentation requirements that intersect with GDPR Art. 22 (automated decision-making).
+> - **Fines landscape:** GDPR enforcement has accelerated significantly since 2022. Notable: Meta €1.2B (2023, data transfers), TikTok €345M (2023, children's data), LinkedIn €310M (2024, lawful basis for profiling).
+
 ## Overview
 
 The GDPR is the primary privacy law for the European Union and European Economic Area. It applies to any organisation that processes personal data of EU/EEA residents, regardless of where the organisation is located.

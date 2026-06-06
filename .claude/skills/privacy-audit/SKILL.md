@@ -11,9 +11,71 @@ Perform a full-stack privacy audit and produce a structured findings report. Thi
 
 ## How to Run This Skill
 
-You will execute the audit in **five phases**. Launch Explore sub-agents in parallel for discovery, synthesize findings yourself, then write the report.
+You will execute the audit in **seven phases**. Start with Phase 0 (scoping) and Phase 1 (discovery) before running anything else — scoping determines which compliance matrices are relevant, and discovery determines which scripts to run.
 
-**Output location:** Write the final report to `docs/privacy-audit.md` (create the path if it doesn't exist). If the repo already has a `docs/plans/` directory, write to `docs/plans/privacy-audit.md` instead.
+**Output:** `docs/privacy-audit-YYYY-MM-DD.md` (today's date). Use `docs/plans/` if that directory exists. Never overwrite a previous report — the dated filename is the audit history. Add `docs/privacy-audit-*.md` to `.gitignore`.
+
+---
+
+## Phase 0 — Jurisdictional Scoping (do this before everything else)
+
+Before running any scans, determine which privacy laws actually apply. Assessing six legal frameworks for a company with no EU users wastes audit time and creates false confidence from "compliant" checkboxes on inapplicable laws.
+
+**Ask the user (or infer from the codebase):**
+
+```
+1. Where are your users located?
+   (EU/EEA · UK · USA · Brazil · Canada · Thailand · Singapore · South Africa · Other)
+
+2. What is your approximate user count or revenue?
+   (Affects CCPA threshold: $25M+ revenue OR 100k+ consumers)
+
+3. Do you process any of these categories? (check all that apply)
+   ☐ Health / medical data
+   ☐ Payment card data (even via Stripe — check what's stored)
+   ☐ Children's data (users under 13 or under 16 for EU)
+   ☐ Employee / HR data
+   ☐ Brazilian users (CPF, Pix transactions, KYC)
+   ☐ US consumers in California
+
+4. Does the company have a legal entity or data centre in any of these regions?
+```
+
+**Infer from the codebase if the user cannot answer:**
+
+```bash
+# Currency / locale hints at user base
+grep -rP 'BRL|R\$|CPF|CNPJ|brazili' . --include="*.py" --include="*.ts" --include="*.json" 2>/dev/null | head -10
+grep -rP 'EUR|GDPR|gdpr|dsgvo|supervisory.authority' . --include="*.py" --include="*.ts" 2>/dev/null | head -10
+grep -rP 'CAD|\bCPPA\b|\bPIPEDA\b' . --include="*.py" --include="*.ts" 2>/dev/null | head -10
+grep -rP 'ZAR|POPIA|information.regulator' . --include="*.py" --include="*.ts" 2>/dev/null | head -10
+
+# Payment / fintech scope
+grep -rPl 'stripe|pix|boleto|nubank|pagamento|payment' . 2>/dev/null | head -10
+
+# Children's data scope
+grep -rP '\bCOPPA\b|under.13|children|parental.consent|age.verif' . --include="*.py" --include="*.ts" 2>/dev/null | head -10
+```
+
+**Output of Phase 0 — Jurisdiction Decision:**
+
+Based on the answers above, decide which laws to assess and record this in the report header. Only fill in compliance matrices for applicable laws. Skip the rest entirely.
+
+| Law | Applies? | Reason |
+|---|---|---|
+| GDPR | Yes / No / Uncertain | EU/EEA users or EU establishment |
+| UK GDPR | Yes / No / Uncertain | UK users or UK establishment (post-Brexit) |
+| LGPD | Yes / No / Uncertain | Brazilian users (any volume) |
+| CCPA/CPRA | Yes / No / Uncertain | CA users + meets revenue/volume threshold |
+| PIPEDA / QC Law 25 | Yes / No / Uncertain | Canadian users or Canadian entity |
+| PDPA (Thailand) | Yes / No / Uncertain | Thai users or Thai entity |
+| PDPA (Singapore) | Yes / No / Uncertain | Singapore users or Singapore entity |
+| POPIA | Yes / No / Uncertain | South African users or SA entity |
+| HIPAA | Yes / No / Uncertain | US health data |
+| COPPA | Yes / No / Uncertain | Users under 13 |
+| PCI DSS | Yes / No / Uncertain | Payment card data stored or transmitted |
+
+> **If a law is marked "No" or "Uncertain" and you have low confidence**, mark it "Not assessed — [reason]" in the report rather than filling in the matrix. A blank "Uncertain" matrix entry is less dangerous than a confidently wrong "Compliant."
 
 ---
 
@@ -358,7 +420,7 @@ ls .husky/ 2>/dev/null
 
 ## Phase 3 — Legal Compliance Matrix
 
-For each law, assess compliance based on findings above.
+**Only assess laws marked "Yes" or "Uncertain" in the Phase 0 jurisdiction table.** Do not fill in matrices for laws that do not apply — a completed matrix for an inapplicable law creates false audit scope and misleads reviewers. For laws marked "No", write one line: `Not applicable — [reason from Phase 0].`
 
 ### GDPR (EU — Regulation 2016/679)
 
@@ -1149,25 +1211,35 @@ useEffect(() => {
 > pipeline. **This document is a roadmap for attackers if it leaks.**
 >
 > Before writing the report:
-> 1. Add `docs/privacy-audit.md` (or your chosen path) to `.gitignore` so it is
->    never committed to the repository.
-> 2. Consider writing the report outside the working tree entirely:
+> 1. Add `docs/privacy-audit-*.md` to `.gitignore` so reports are never
+>    committed to the repository.
+> 2. Consider writing outside the working tree entirely:
 >    `~/privacy-audit-$(date +%Y-%m-%d).md`
-> 3. Store the final report in a private, access-controlled location (encrypted
->    drive, internal wiki with ACLs, or a secrets manager document store) —
->    never in a public repo, a shared Google Doc with broad access, or a CI
->    artifact with public visibility.
-> 4. Treat the report under the same access controls as production credentials.
+> 3. Store in a private, access-controlled location (encrypted drive, internal
+>    wiki with ACLs, secrets manager document store) — never in a public repo,
+>    a shared Google Doc with broad access, or a CI artifact with public visibility.
+> 4. Treat under the same access controls as production credentials.
 
-Write the full audit report to `docs/privacy-audit.md` (or `docs/plans/privacy-audit.md` if that directory exists). **Remind the user to add this path to `.gitignore` before the report is written.** The report must follow this structure:
+Write the full audit report to `docs/privacy-audit-YYYY-MM-DD.md` using today's date (or `docs/plans/privacy-audit-YYYY-MM-DD.md` if that directory exists). **Never overwrite a previous report — the dated filename is the audit history.** Remind the user to add `docs/privacy-audit-*.md` to `.gitignore`.
+
+**Tracking progress across runs:** To compare two audit reports, run:
+```bash
+diff docs/privacy-audit-2026-01-15.md docs/privacy-audit-2026-06-01.md | grep '^[<>]' | grep -E 'CRITICAL|HIGH|MEDIUM'
+```
+A finding that appears in `<` (old) but not `>` (new) has been remediated. A finding in `>` but not `<` is newly introduced. The run ID in each report header makes this unambiguous.
+
+The report must follow this structure:
 
 ```markdown
 # Privacy Engineering Audit Report
 
+**Run ID:** <repo-slug>-<YYYY-MM-DD> (e.g. `myapp-2026-06-06`)
 **Date:** <today>
+**Previous run:** <filename of last report, or "first run">
 **Repository:** <repo name>
 **Tech Stack:** <detected stack>
-**Laws Assessed:** GDPR · LGPD · CCPA · PIPEDA · [others detected as relevant]
+**Jurisdictions assessed:** <from Phase 0 — only laws marked Yes/Uncertain>
+**Laws Assessed:** <only applicable laws from Phase 0>
 
 ---
 

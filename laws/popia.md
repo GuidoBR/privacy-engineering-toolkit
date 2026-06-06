@@ -1,6 +1,15 @@
 # POPIA — Protection of Personal Information Act
 *Act 4 of 2013 — South Africa — Effective 1 July 2021 (enforcement)*
 
+> **Last verified:** June 2026
+>
+> **Known pending changes and active risks:**
+> - **Information Regulator enforcement active:** The Information Regulator (South Africa) issued its first enforcement notices and fines in 2022–2023. Priority sectors include financial services, healthcare, and public bodies.
+> - **Administrative fines:** Up to R10 million (~USD 550k at mid-2026 rates) per violation. Criminal penalties (imprisonment up to 10 years) apply for intentional violations.
+> - **POPIA and GDPR adequacy:** South Africa has not been granted GDPR adequacy status. Transfers of EU personal data to South Africa require appropriate safeguards (SCCs or BCRs). POPIA Art. 72 restricts transfers of South African personal data to countries without comparable protection.
+> - **Public interest and research exemptions** are broader under POPIA than GDPR — verify applicability before relying on them.
+> - **Deadline for Information Officer registration:** All private and public bodies must register their Information Officer with the Information Regulator. Registration is online at inforeg.org.za.
+
 ## Overview
 
 South Africa's comprehensive data protection law, aligned closely with international standards including the GDPR. Processing of personal information is regulated through eight conditions for lawful processing.

@@ -2,7 +2,20 @@
 *Thailand: B.E. 2562 (2019) — Effective 1 June 2022*
 *Singapore: Personal Data Protection Act 2012 (No. 26 of 2012) — Effective 2 July 2014*
 
+> **Last verified:** June 2026
+>
 > **Two separate laws share the "PDPA" acronym.** This document covers both. They share common principles but differ in structure and enforcement.
+>
+> **Thailand PDPA:**
+> - Full enforcement began 1 June 2022 (previously delayed by COVID-era royal decrees).
+> - The PDPC (Personal Data Protection Committee) issued subordinate regulations in 2022–2023 covering consent standards, security measures, and data breach notification procedures.
+> - DPO is mandatory for: public authorities, organisations with large-scale regular/systematic monitoring, or organisations with large-scale processing of sensitive data.
+> - Cross-border transfer rules require either recipient country adequacy (no formal list yet) or appropriate safeguards (standard contractual clauses, BCRs, or consent).
+>
+> **Singapore PDPA:**
+> - 2020 amendments (effective February 2021) introduced: mandatory breach notification (3 calendar days for significant breaches to PDPC; without undue delay to affected individuals), increased fines (up to S$1M or 10% of annual turnover for turnover > S$10M), and business improvement exception to consent.
+> - PDPC has been actively enforcing — financial penalties issued against healthcare, financial, and retail sectors since 2021.
+> - Data portability obligation (new in 2021 amendments) requires prescribed organisations to transmit data to other organisations on user request; regulations specify which sectors and data types.
 
 ---
 

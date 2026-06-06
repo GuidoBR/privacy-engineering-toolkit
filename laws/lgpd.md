@@ -1,6 +1,14 @@
 # LGPD — Lei Geral de Proteção de Dados Pessoais
 *Lei 13.709/2018 — Effective 18 September 2020; Enforcement from 1 August 2021*
 
+> **Last verified:** June 2026
+>
+> **Known pending changes and active risks:**
+> - **ANPD enforcement active:** The ANPD began formal enforcement proceedings in 2023. First administrative sanction (warning + corrective measure order) issued in 2023. Monetary fines (up to 2% Brazil revenue, capped R$50M per violation) are now being applied. The ANPD has prioritised health data, children's data, and security incident cases.
+> - **Resolução BCB nº 522/2025:** Updated Banco Central regulation supersedes CMN 4.893/2021 for payment/Pix transaction record retention (5 years). Verify current version at bcb.gov.br before citing in deletion responses.
+> - **International transfer rules:** ANPD is still developing its adequacy framework. Standard contractual clauses and BCRs are the primary mechanisms pending formal adequacy decisions.
+> - **DPO (Encarregado) requirement:** Unlike GDPR, LGPD requires ALL controllers (not just those meeting a threshold) to appoint an encarregado and publicly disclose their contact. This is commonly missed by international companies with Brazilian users.
+
 ## Overview
 
 Brazil's primary data protection law, inspired by the GDPR but with Brazilian-specific provisions. Applies to any processing of personal data of individuals located in Brazil, regardless of the processor's location.

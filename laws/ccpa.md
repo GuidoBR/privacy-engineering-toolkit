@@ -1,6 +1,15 @@
 # CCPA/CPRA — California Consumer Privacy Act / California Privacy Rights Act
 *California Civil Code §1798.100 et seq. — CCPA effective 1 January 2020; CPRA amendments effective 1 January 2023*
 
+> **Last verified:** June 2026
+>
+> **Known pending changes and active risks:**
+> - **Revenue threshold is CPI-adjusted annually.** The $25M threshold stated in the law is adjusted each year by the California Privacy Protection Agency (CPPA) for inflation. Verify the current threshold at cppa.ca.gov before relying on it for applicability decisions.
+> - **CPPA enforcement active:** The California Privacy Protection Agency began enforcement in 2023. The January 2023 removal of the 30-day cure period means violations are now immediately actionable.
+> - **Cure period removed:** As of 1 January 2023, businesses no longer have a 30-day window to cure violations before the CPPA acts.
+> - **Automated decision-making regulations:** The CPPA is developing formal regulations for automated decision-making and profiling under CPRA. Draft rules published 2023–2024; final rules expected 2025–2026.
+> - **Other US state laws:** Virginia (VCDPA), Colorado (CPA), Connecticut (CTDPA), Texas (TDPSA), and a growing list of other states have enacted or are enacting similar laws. If you serve US users broadly, a multi-state analysis may be required.
+
 ## Overview
 
 The CCPA, as amended by the CPRA, is the most comprehensive US state privacy law. It grants California residents broad rights over their personal information and imposes significant obligations on businesses.
