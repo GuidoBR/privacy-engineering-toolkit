@@ -332,7 +332,145 @@ def parse_activerecord(path: Path) -> list[FieldRecord]:
     return records
 
 
+# ── Django migration parser ───────────────────────────────────────────────────
+# Handles: migrations.CreateModel, migrations.AddField, migrations.AlterField
+# Django migration files contain 'migrations.Migration' not 'models.Model',
+# so they are missed by parse_django(). These files are the ground truth for
+# what columns were actually applied to the DB.
+
+def parse_django_migration(path: Path) -> list[FieldRecord]:
+    records = []
+    content = path.read_text(errors='replace')
+
+    # CreateModel(name='User', fields=[('email', models.EmailField(...)), ...])
+    for model_match in re.finditer(
+        r'migrations\.CreateModel\s*\(\s*name\s*=\s*[\'"](\w+)[\'"]',
+        content
+    ):
+        table = re.sub(r'(?<!^)(?=[A-Z])', '_', model_match.group(1)).lower()
+        # Find the fields list that follows this CreateModel call
+        start = model_match.end()
+        fields_match = re.search(r'fields\s*=\s*\[(.+?)\]', content[start:start+8000], re.DOTALL)
+        if not fields_match:
+            continue
+        for field_match in re.finditer(
+            r'\(\s*[\'"](\w+)[\'"]\s*,\s*models\.(\w+)\s*\(',
+            fields_match.group(1)
+        ):
+            records.append(make_record(str(path), table, field_match.group(1), field_match.group(2)))
+
+    # AddField(model_name='User', name='phone', field=models.CharField(...))
+    for add_match in re.finditer(
+        r'migrations\.AddField\s*\(\s*model_name\s*=\s*[\'"](\w+)[\'"]\s*,'
+        r'\s*name\s*=\s*[\'"](\w+)[\'"]\s*,\s*field\s*=\s*models\.(\w+)\s*\(',
+        content
+    ):
+        table = add_match.group(1).lower()
+        records.append(make_record(str(path), table, add_match.group(2), add_match.group(3)))
+
+    return records
+
+
+# ── Alembic (SQLAlchemy) migration parser ─────────────────────────────────────
+# Handles: op.create_table(..., sa.Column(...)), op.add_column(...)
+
+def parse_alembic_migration(path: Path) -> list[FieldRecord]:
+    records = []
+    content = path.read_text(errors='replace')
+
+    # op.create_table('users', sa.Column('email', sa.String(), ...), ...)
+    for tbl_match in re.finditer(
+        r'op\.create_table\s*\(\s*[\'"](\w+)[\'"]',
+        content
+    ):
+        table = tbl_match.group(1)
+        start = tbl_match.end()
+        # Collect until the closing paren at the same depth
+        depth, end = 1, start
+        for i, ch in enumerate(content[start:], start):
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        block = content[start:end]
+        for col_match in re.finditer(
+            r'sa\.Column\s*\(\s*[\'"](\w+)[\'"]\s*,\s*sa\.(\w+)',
+            block
+        ):
+            records.append(make_record(str(path), table, col_match.group(1), col_match.group(2)))
+
+    # op.add_column('users', sa.Column('phone', sa.String(), ...))
+    for add_match in re.finditer(
+        r'op\.add_column\s*\(\s*[\'"](\w+)[\'"]\s*,\s*sa\.Column\s*\(\s*[\'"](\w+)[\'"]\s*,\s*sa\.(\w+)',
+        content
+    ):
+        records.append(make_record(str(path), add_match.group(1), add_match.group(2), add_match.group(3)))
+
+    return records
+
+
+# ── SQL DDL parser ────────────────────────────────────────────────────────────
+# Handles: CREATE TABLE, ALTER TABLE ... ADD COLUMN
+# Covers Flyway, Liquibase, and raw SQL migration files.
+
+def parse_sql_ddl(path: Path) -> list[FieldRecord]:
+    records = []
+    content = path.read_text(errors='replace')
+
+    # CREATE TABLE [IF NOT EXISTS] [schema.]table_name ( ... )
+    for tbl_match in re.finditer(
+        r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?(\w+)\s*\(',
+        content, re.IGNORECASE
+    ):
+        table = tbl_match.group(1).lower()
+        start = tbl_match.end()
+        # Find the matching closing paren
+        depth, end = 1, start
+        for i, ch in enumerate(content[start:], start):
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        block = content[start:end]
+        for line in block.splitlines():
+            line = line.strip().rstrip(',')
+            if not line or line.upper().startswith(('PRIMARY', 'UNIQUE', 'FOREIGN',
+                                                     'INDEX', 'KEY', 'CONSTRAINT', '--', '/*')):
+                continue
+            col_match = re.match(r'["`]?(\w+)["`]?\s+(\w+)', line)
+            if col_match:
+                col_name = col_match.group(1)
+                col_type = col_match.group(2)
+                if col_name.upper() not in ('PRIMARY', 'UNIQUE', 'FOREIGN', 'INDEX',
+                                             'KEY', 'CONSTRAINT', 'CHECK'):
+                    records.append(make_record(str(path), table, col_name, col_type))
+
+    # ALTER TABLE table ADD [COLUMN] col_name col_type
+    for add_match in re.finditer(
+        r'ALTER\s+TABLE\s+(?:\w+\.)?(\w+)\s+ADD\s+(?:COLUMN\s+)?["`]?(\w+)["`]?\s+(\w+)',
+        content, re.IGNORECASE
+    ):
+        records.append(make_record(str(path), add_match.group(1).lower(),
+                                   add_match.group(2), add_match.group(3)))
+
+    return records
+
+
 # ── file routing ──────────────────────────────────────────────────────────────
+
+def _is_django_migration(content: str) -> bool:
+    return 'migrations.Migration' in content or 'from django.db import migrations' in content
+
+def _is_alembic_migration(content: str) -> bool:
+    return 'op.create_table' in content or 'op.add_column' in content or \
+           'from alembic' in content or 'import alembic' in content
+
 
 def parse_file(path: Path) -> list[FieldRecord]:
     name = path.name.lower()
@@ -340,10 +478,16 @@ def parse_file(path: Path) -> list[FieldRecord]:
     try:
         if suffix == '.py':
             content = path.read_text(errors='replace')
+            if _is_django_migration(content):
+                return parse_django_migration(path)
+            if _is_alembic_migration(content):
+                return parse_alembic_migration(path)
             if 'models.Model' in content or 'django' in content.lower():
                 return parse_django(path)
             if 'Column(' in content or 'mapped_column(' in content:
                 return parse_sqlalchemy(path)
+        elif suffix == '.sql':
+            return parse_sql_ddl(path)
         elif name == 'schema.prisma' or name.endswith('.prisma'):
             return parse_prisma(path)
         elif suffix in ('.ts', '.tsx') and ('@Entity' in path.read_text(errors='replace')):
@@ -413,7 +557,9 @@ def main():
 
     SKIP_DIRS = {
         'node_modules', '.venv', 'venv', '.git', '__pycache__',
-        'dist', 'build', '.next', '.nuxt', 'vendor', 'migrations'
+        'dist', 'build', '.next', '.nuxt', 'vendor',
+        # Note: 'migrations' is intentionally NOT skipped — Django Alembic/Rails
+        # migration files are often the most complete source of schema truth.
     }
 
     records: list[FieldRecord] = []

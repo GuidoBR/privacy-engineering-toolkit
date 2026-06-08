@@ -118,8 +118,23 @@ fi
 # A companion anonymization query or scheduled purge job is required.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Exclude documentation and markup files explicitly.
+# The --include flags already restrict to source code extensions, but some
+# grep implementations on Linux return matches from files that don't match
+# any --include pattern when multiple --include flags are used. The explicit
+# --exclude flags below are belt-and-suspenders to prevent documentation files
+# (README.md, cookbook/*.md, templates/*.md, SKILL.md, *.sh, *.txt) from
+# appearing in soft-delete findings.
+DOC_EXCLUDES=(
+  --exclude='*.md' --exclude='*.txt' --exclude='*.rst'
+  --exclude='*.sh'  --exclude='*.yaml' --exclude='*.yml'
+  --exclude='*.toml' --exclude='*.cfg' --exclude='*.ini'
+  --exclude-dir=docs --exclude-dir=documentation
+  --exclude-dir=cookbook --exclude-dir=templates
+)
+
 SOFT_DELETE_FILES=$(grep -rPln \
-  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.py" --include="*.rb" --include="*.ts" --include="*.js" \
   --include="*.go" --include="*.java" --include="*.sql" \
   '\bdeleted_at\b|\bis_deleted\b|\barchived_at\b|\bsoft.delet|\bdeletedAt\b' \
@@ -127,7 +142,7 @@ SOFT_DELETE_FILES=$(grep -rPln \
 
 ANONYMIZATION_EXISTS=false
 ANONYMIZATION_FILES=$(grep -rPln \
-  "${EXCLUDE_DIRS[@]}" \
+  "${EXCLUDE_DIRS[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.py" --include="*.rb" --include="*.ts" --include="*.js" \
   --include="*.go" --include="*.java" --include="*.sql" \
   'anonymi[sz]|redacted\.invalid|@deleted\b|deleted_\d+@|nulled|NULL.*email|email.*NULL|scheduled_for_deletion|deletion_scheduled' \
@@ -178,33 +193,36 @@ FK_PATTERN='\buser_id\b|\bowner_id\b|\bauthor_id\b|\bcreated_by\b|\bupdated_by\b
 CANDIDATE_FILES=""
 
 # SQL: all SQL files are DDL/DML — inherently schema scope
-_sql=$(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+_sql=$(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.sql" "$FK_PATTERN" "$SCAN_DIR" 2>/dev/null || true)
 CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"${_sql}"
 
 # Python: only files that also contain ORM column/model markers
 while IFS= read -r f; do
   [ -z "$f" ] && continue
+  # Belt-and-suspenders: skip any file that slipped through without a .py extension
+  [[ "$f" == *.py ]] || continue
   if grep -qP 'Column\s*\(|mapped_column\s*\(|models\.Model\b|DeclarativeBase|declarative_base\s*\(' "$f" 2>/dev/null; then
     CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
   fi
-done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.py" "$FK_PATTERN" "$SCAN_DIR" 2>/dev/null || true)
 
 # Ruby: migration files (path contains /migrate/) or schema.rb, or
 #        files that contain create_table / add_column (ActiveRecord DSL)
 while IFS= read -r f; do
   [ -z "$f" ] && continue
+  [[ "$f" == *.rb ]] || continue
   if echo "$f" | grep -qP '/migrate/|schema\.rb$'; then
     CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
   elif grep -qP 'create_table|add_column' "$f" 2>/dev/null; then
     CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
   fi
-done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.rb" "$FK_PATTERN" "$SCAN_DIR" 2>/dev/null || true)
 
 # Prisma: all .prisma files are schema by definition
-_prisma=$(grep -rPln "${EXCLUDE_DIRS[@]}" \
+_prisma=$(grep -rPln "${EXCLUDE_DIRS[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.prisma" \
   '\buser_id\b|\buserId\b|\bowner_id\b|\bownerId\b|\bauthorId\b|\bcreatedById\b|\bupdatedById\b' \
   "$SCAN_DIR" 2>/dev/null || true)
@@ -213,10 +231,11 @@ CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"${_prisma}"
 # TypeScript: only files with ORM entity decorators (@Entity, @Column, @ManyToOne)
 while IFS= read -r f; do
   [ -z "$f" ] && continue
+  [[ "$f" == *.ts ]] || continue
   if grep -qP '@Entity\b|@Column\b|@ManyToOne\b|@OneToMany\b|@JoinColumn\b' "$f" 2>/dev/null; then
     CANDIDATE_FILES="${CANDIDATE_FILES}"$'\n'"$f"
   fi
-done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+done < <(grep -rPln "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.ts" \
   '\buser_id\b|\buserId\b|\bownerId\b|\bauthorId\b|\bcreatedById\b' \
   "$SCAN_DIR" 2>/dev/null || true)

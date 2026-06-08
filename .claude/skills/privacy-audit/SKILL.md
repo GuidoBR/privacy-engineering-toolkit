@@ -1444,9 +1444,16 @@ SET email = CONCAT('deleted_', id, '@deleted.invalid'),
 WHERE id = $1;
 -- Keep the row for referential integrity but PII is gone
 
--- Also insert into the deletion registry for backup reconciliation:
+-- Also insert into the deletion registry for backup reconciliation.
+-- Use HMAC not bare SHA-256: sequential integer user IDs are trivially
+-- reversible via rainbow table. hmac() requires the pgcrypto extension.
+-- Store the key in a secrets manager; inject via app.deletion_hmac_key.
 INSERT INTO deletion_registry (user_id_hash, deleted_at, reason)
-VALUES (encode(sha256($1::bytea), 'hex'), NOW(), 'user_request');
+VALUES (
+    encode(hmac($1::text, current_setting('app.deletion_hmac_key'), 'sha256'), 'hex'),
+    NOW(),
+    'user_request'
+);
 
 -- After bulk erasure, reclaim disk space (PostgreSQL MVCC leaves dead tuples):
 -- VACUUM (VERBOSE, ANALYZE) users;
@@ -1509,7 +1516,11 @@ def shred_user(user_id: str):
     kms.schedule_key_deletion(KeyId=key_id, PendingWindowInDays=7)
     # Log the shredding event using opaque reference only:
     import hashlib
-    ref = hashlib.sha256(user_id.encode()).hexdigest()[:12]
+    import hmac as _hmac, os
+    # Use HMAC not bare SHA-256: sequential integer IDs are rainbow-table reversible.
+    # DELETION_HMAC_KEY must be a high-entropy secret stored in a secrets manager.
+    key = os.environ['DELETION_HMAC_KEY'].encode()
+    ref = _hmac.new(key, str(user_id).encode(), 'sha256').hexdigest()[:16]
     audit_log(action='crypto_shred_scheduled', subject_ref=ref)
 ```
 

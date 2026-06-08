@@ -115,6 +115,18 @@ def is_true(value: Optional[str]) -> bool:
     return value is not None and value.lower() in ('true', '1')
 
 
+def is_variable_ref(value: Optional[str]) -> bool:
+    """Return True when the value is a Terraform expression, not a literal.
+
+    var.x, module.x, local.x, data.x, each.x are indeterminate at parse time.
+    A check that passes because the value is var.enable_encryption may still
+    fail at apply-time if the variable's default is false.
+    """
+    if value is None:
+        return False
+    return bool(re.match(r'^(var|module|local|data|each|path|self)\b', value.strip()))
+
+
 def check_terraform(path: Path) -> list[Finding]:
     content = path.read_text(errors='replace')
     findings = []
@@ -143,6 +155,15 @@ def check_terraform(path: Path) -> list[Finding]:
                     str(path), ln,
                     'GDPR Art. 32 / LGPD Art. 46'
                 ))
+            elif is_variable_ref(enc):
+                findings.append(Finding(
+                    'LOW', 'rds-encryption-variable-ref',
+                    f'RDS storage_encrypted is a variable reference — verify actual value ({name})',
+                    f'Value is `{enc}`. Confirm the variable default and all call-site overrides '
+                    f'are `true`. A false default silently disables encryption at rest.',
+                    str(path), ln,
+                    'GDPR Art. 32 / LGPD Art. 46'
+                ))
 
             pub = attr(body, 'publicly_accessible')
             if pub is None or is_true(pub):
@@ -150,6 +171,14 @@ def check_terraform(path: Path) -> list[Finding]:
                     'CRITICAL', 'rds-publicly-accessible',
                     f'RDS instance publicly accessible ({name})',
                     'publicly_accessible must be false. Database is reachable from the internet.',
+                    str(path), ln,
+                    'GDPR Art. 32 / LGPD Art. 46'
+                ))
+            elif is_variable_ref(pub):
+                findings.append(Finding(
+                    'LOW', 'rds-public-access-variable-ref',
+                    f'RDS publicly_accessible is a variable reference — verify actual value ({name})',
+                    f'Value is `{pub}`. Confirm default and all overrides are `false`.',
                     str(path), ln,
                     'GDPR Art. 32 / LGPD Art. 46'
                 ))
@@ -708,6 +737,91 @@ def check_ci_yaml(path: Path) -> list[Finding]:
     return findings
 
 
+# ── Cloud provider coverage warning ──────────────────────────────────────────
+
+# Patterns that indicate GCP or Azure IaC resources.
+# If found, we emit a warning that these are not checked.
+_GCP_PATTERNS = re.compile(
+    r'\bresource\s+"(google_sql_database|google_storage_bucket|google_kms|'
+    r'google_container|google_bigquery|google_pubsub|google_cloud_run)\b',
+    re.MULTILINE
+)
+_AZURE_PATTERNS = re.compile(
+    r'\bresource\s+"(azurerm_sql_server|azurerm_storage_account|azurerm_key_vault|'
+    r'azurerm_cosmosdb|azurerm_postgresql|azurerm_mysql|azurerm_eventhub|'
+    r'azurerm_servicebus|azurerm_monitor_diagnostic)\b',
+    re.MULTILINE
+)
+_PULUMI_PATTERNS = re.compile(r'pulumi\.yaml|@pulumi/', re.MULTILINE)
+
+
+def detect_unscanned_providers(root: Path) -> list[Finding]:
+    """Scan .tf and Pulumi files for non-AWS cloud resources and warn if found."""
+    findings = []
+    gcp_files: list[str] = []
+    azure_files: list[str] = []
+    pulumi_files: list[str] = []
+
+    for path in root.rglob('*'):
+        if not path.is_file():
+            continue
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in ('.tf', '.yaml', '.yml', '.ts', '.json'):
+            continue
+        try:
+            content = path.read_text(errors='replace')
+        except Exception:
+            continue
+        if suffix == '.tf':
+            if _GCP_PATTERNS.search(content):
+                gcp_files.append(str(path))
+            if _AZURE_PATTERNS.search(content):
+                azure_files.append(str(path))
+        if _PULUMI_PATTERNS.search(content):
+            pulumi_files.append(str(path))
+
+    if gcp_files:
+        findings.append(Finding(
+            'LOW', 'iac-gcp-not-scanned',
+            'GCP Terraform resources detected — not covered by this scanner',
+            'scan-iac.py checks AWS resource types only (aws_db_instance, aws_s3_bucket, etc.). '
+            'GCP resources (google_sql_database_instance, google_storage_bucket, '
+            'google_kms_crypto_key, etc.) are not evaluated. Zero AWS findings does NOT mean '
+            'the GCP infrastructure is secure. Use checkov or tfsec for GCP coverage. '
+            f'Files: {", ".join(gcp_files[:3])}{"..." if len(gcp_files) > 3 else ""}',
+            gcp_files[0], 0,
+            'GDPR Art. 32 / LGPD Art. 46'
+        ))
+
+    if azure_files:
+        findings.append(Finding(
+            'LOW', 'iac-azure-not-scanned',
+            'Azure Terraform resources detected — not covered by this scanner',
+            'scan-iac.py checks AWS resource types only. Azure resources (azurerm_sql_server, '
+            'azurerm_storage_account, azurerm_key_vault, etc.) are not evaluated. '
+            'Use checkov or tfsec for Azure coverage. '
+            f'Files: {", ".join(azure_files[:3])}{"..." if len(azure_files) > 3 else ""}',
+            azure_files[0], 0,
+            'GDPR Art. 32 / LGPD Art. 46'
+        ))
+
+    if pulumi_files:
+        findings.append(Finding(
+            'LOW', 'iac-pulumi-not-scanned',
+            'Pulumi IaC detected — not covered by this scanner',
+            'scan-iac.py parses Terraform HCL and CloudFormation YAML/JSON only. '
+            'Pulumi programs are not evaluated regardless of cloud provider. '
+            'Use checkov or Pulumi Compliance Ready templates for Pulumi coverage. '
+            f'Files: {", ".join(pulumi_files[:3])}{"..." if len(pulumi_files) > 3 else ""}',
+            pulumi_files[0], 0,
+            'GDPR Art. 32 / LGPD Art. 46'
+        ))
+
+    return findings
+
+
 # ── file routing ──────────────────────────────────────────────────────────────
 
 def is_cloudformation(path: Path, content: str) -> bool:
@@ -760,6 +874,8 @@ SKIP_DIRS = {
 def emit_text(findings: list[Finding], quiet: bool) -> None:
     if not quiet:
         print('\033[1mPrivacy IaC Scanner\033[0m')
+        print('\033[0;37mScope: AWS Terraform · CloudFormation · CDK TypeScript\033[0m')
+        print('\033[0;37mNote:  GCP, Azure, and Pulumi are NOT checked — see LOW findings if detected.\033[0m')
         print('──────────────────────────────────────────────────────')
 
     colors = {'CRITICAL': '\033[0;31m', 'HIGH': '\033[1;33m',
@@ -866,6 +982,9 @@ def main():
             continue
         findings = check_file(path)
         all_findings.extend(findings)
+
+    # Warn if GCP, Azure, or Pulumi IaC is present — those providers are not checked.
+    all_findings.extend(detect_unscanned_providers(root))
 
     all_findings.sort(key=lambda f: (SEVERITY_ORDER.get(f.severity, 9), f.file, f.line))
 
