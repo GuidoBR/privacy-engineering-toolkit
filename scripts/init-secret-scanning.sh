@@ -142,6 +142,17 @@ if [ "$SKIP_PRECOMMIT" = false ]; then
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]'
 
+  PII_LOGS_HOOK='
+  - repo: local
+    hooks:
+      - id: scan-pii-logs
+        name: Scan for PII in log statements
+        language: system
+        entry: bash scripts/scan-pii-logs.sh
+        args: ["--format", "text"]
+        pass_filenames: false
+        types_or: [python, javascript, ts, go, ruby, java]'
+
   if [ ! -f "$PRECOMMIT_CONFIG" ]; then
     # Create a new pre-commit config
     cat > "$PRECOMMIT_CONFIG" <<'EOF'
@@ -156,8 +167,18 @@ repos:
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
+
+  - repo: local
+    hooks:
+      - id: scan-pii-logs
+        name: Scan for PII in log statements
+        language: system
+        entry: bash scripts/scan-pii-logs.sh
+        args: ["--format", "text"]
+        pass_filenames: false
+        types_or: [python, javascript, ts, go, ruby, java]
 EOF
-    ok "Created ${PRECOMMIT_CONFIG} with gitleaks and detect-secrets"
+    ok "Created ${PRECOMMIT_CONFIG} with gitleaks, detect-secrets, and scan-pii-logs"
   else
     # Patch existing config
     PATCHED=false
@@ -174,6 +195,13 @@ EOF
       PATCHED=true
     else
       ok "detect-secrets already in ${PRECOMMIT_CONFIG}"
+    fi
+    if ! grep -q 'scan-pii-logs' "$PRECOMMIT_CONFIG"; then
+      echo "$PII_LOGS_HOOK" >> "$PRECOMMIT_CONFIG"
+      ok "Added scan-pii-logs to ${PRECOMMIT_CONFIG}"
+      PATCHED=true
+    else
+      ok "scan-pii-logs already in ${PRECOMMIT_CONFIG}"
     fi
   fi
 

@@ -300,7 +300,7 @@ fi
 
 # Django: flag DO_NOTHING (no cascade at all) as HIGH; others as MEDIUM
 DJANGO_DO_NOTHING=$(grep -rPn \
-  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.py" \
   'on_delete\s*=\s*models\.DO_NOTHING' \
   "$SCAN_DIR" 2>/dev/null || true)
@@ -309,6 +309,8 @@ if [ -n "$DJANGO_DO_NOTHING" ]; then
   while IFS= read -r match; do
     [ -z "$match" ] && continue
     file=$(echo "$match" | cut -d: -f1)
+    # Belt-and-suspenders: skip any non-.py file that slipped through
+    [[ "$file" == *.py ]] || continue
     lineno=$(echo "$match" | cut -d: -f2)
     emit_finding "HIGH" "django-on-delete-do-nothing" \
       "Django ForeignKey with on_delete=DO_NOTHING — no cascade at all" \
@@ -320,20 +322,22 @@ fi
 
 # Django CASCADE/SET_NULL/PROTECT — app-layer only, flag if no DB FK found
 DJANGO_CASCADE=$(grep -rPln \
-  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.py" \
   'on_delete\s*=\s*models\.(CASCADE|SET_NULL|PROTECT)' \
   "$SCAN_DIR" 2>/dev/null || true)
 
 if [ -n "$DJANGO_CASCADE" ]; then
+  # Filter to .py files only
+  DJANGO_CASCADE=$(echo "$DJANGO_CASCADE" | grep '\.py$' || true)
   # Check whether any DB-level migration adds FK constraints
   DB_FK_EXISTS=$(grep -rPl \
-    "${EXCLUDE_DIRS[@]}" \
+    "${EXCLUDE_DIRS[@]}" "${DOC_EXCLUDES[@]}" \
     --include="*.sql" --include="*.py" \
     'ON DELETE (CASCADE|SET NULL)|ADD CONSTRAINT.*FOREIGN KEY|AddForeignKey' \
     "$SCAN_DIR" 2>/dev/null || true)
 
-  if [ -z "$DB_FK_EXISTS" ]; then
+  if [ -z "$DB_FK_EXISTS" ] && [ -n "$DJANGO_CASCADE" ]; then
     emit_finding "MEDIUM" "orm-cascade-no-db-fk" \
       "Django on_delete cascade found but no DB-level FK constraints detected" \
       "Django's on_delete is enforced only via the ORM. Services, scripts, or pipelines that access the DB directly bypass it. Add ON DELETE CASCADE / SET NULL constraints at the DB level." \
@@ -344,7 +348,7 @@ fi
 
 # Rails: dependent: :delete_all skips callbacks and may leave child records' children orphaned
 RAILS_DELETE_ALL=$(grep -rPn \
-  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" \
+  "${EXCLUDE_DIRS[@]}" "${EXCLUDE_TEST_FILES[@]}" "${DOC_EXCLUDES[@]}" \
   --include="*.rb" \
   'dependent:\s*:delete_all' \
   "$SCAN_DIR" 2>/dev/null || true)
@@ -353,6 +357,7 @@ if [ -n "$RAILS_DELETE_ALL" ]; then
   while IFS= read -r match; do
     [ -z "$match" ] && continue
     file=$(echo "$match" | cut -d: -f1)
+    [[ "$file" == *.rb ]] || continue
     lineno=$(echo "$match" | cut -d: -f2)
     emit_finding "MEDIUM" "rails-dependent-delete-all" \
       "Rails dependent: :delete_all skips callbacks and nested cascades" \

@@ -371,49 +371,45 @@ find . -maxdepth 6 \( -iname "privacy*" -o -iname "terms*" -o -iname "cookies*" 
 
 ### 2F. CI/CD and Pre-commit Hooks Audit
 
+The following checks are handled deterministically by `scan-iac.py` — run it and interpret the `ci-*` rule findings rather than running these greps manually:
+
 ```bash
-# Check CI for hardcoded secrets
-grep -rn 'password\|secret\|api_key\|access_key\|private_key' \
-  .github/workflows/ .gitlab-ci.yml bitbucket-pipelines.yml Jenkinsfile 2>/dev/null \
-  | grep -v '#' | grep -v 'secrets\.' | grep -v 'env\.' | head -20
+python3 scripts/scan-iac.py . --format json > /tmp/iac-findings.json
+# CI/CD findings have rule_ids starting with 'ci-': ci-hardcoded-secret,
+# ci-checkov-soft-fail, ci-trivy-exit-zero
+```
 
-# Check for secret scanning in CI
-grep -rn 'gitleaks\|trufflehog\|detect-secrets\|git-secrets\|semgrep\|bandit\|gosec\|snyk' \
+The remaining checks below require reading the CI config and making a judgment call that a script cannot make reliably:
+
+```bash
+# Verify SAST tools are present (bandit, semgrep, CodeQL, ESLint security plugin)
+grep -rn 'bandit\|semgrep\|codeql\|eslint.*security' .github/ .gitlab-ci.yml 2>/dev/null
+
+# Verify dependency scanning is present (pip-audit, npm audit, Dependabot, Renovate)
+grep -rn 'pip.audit\|npm audit\|yarn audit\|dependabot\|renovate' \
   .github/ .gitlab-ci.yml 2>/dev/null
 
-# Check for SAST in CI
-grep -rn 'bandit\|semgrep\|sonar\|checkmarx\|veracode\|codeql\|snyk' \
+# Verify OIDC / workload identity is used instead of long-lived access keys
+grep -rn 'aws-actions/configure-aws-credentials\|google-github-actions\|azure/login' \
   .github/ .gitlab-ci.yml 2>/dev/null
-
-# Check for dependency vulnerability scanning
-grep -rn 'safety\|pip-audit\|npm audit\|yarn audit\|trivy\|grype\|dependabot' \
-  .github/ .gitlab-ci.yml 2>/dev/null
+grep -rn 'AWS_ACCESS_KEY_ID\|GOOGLE_APPLICATION_CREDENTIALS\|AZURE_CREDENTIALS' \
+  .github/ .gitlab-ci.yml 2>/dev/null | grep -v 'secrets\.\|vars\.' | head -10
 
 # Check pre-commit hooks
 cat .pre-commit-config.yaml 2>/dev/null
-ls .husky/ 2>/dev/null
 ```
 
-**CI/CD checks:**
+**Checklist (items NOT covered by scan-iac.py):**
 ```
-☐ No hardcoded secrets in CI workflow files
-☐ Secrets injected via CI secret store (GitHub Secrets, GitLab CI variables)
-☐ No PII in CI environment variable names or values visible in logs
 ☐ SAST tool runs on every PR (bandit for Python, ESLint security plugin, CodeQL, Semgrep)
-☐ Secret scanning runs on every commit (gitleaks, trufflehog, detect-secrets)
 ☐ Dependency vulnerability scan runs on every PR (pip-audit/safety, npm audit, Dependabot)
 ☐ Container image scanning for CVEs (Trivy, Grype, Snyk)
-☐ PII-in-logs check runs as a lint step
-☐ Production deployments require approvals (not auto-deploy from any branch)
-☐ Least-privilege cloud credentials in CI (OIDC, not long-lived keys)
-```
-
-**Pre-commit hook checks:**
-```
-☐ detect-secrets or gitleaks prevents secrets being committed
-☐ PII-in-logger pattern check (grep for email/password/token in log calls)
-☐ Ruff/ESLint security rules enabled
-☐ Pre-commit hooks documented in CONTRIBUTING.md
+☐ PII-in-logs check runs as a lint step (scan-pii-logs.sh in CI and pre-commit)
+☐ Production deployments require manual approval (not auto-deploy from any branch)
+☐ Least-privilege cloud credentials in CI (OIDC/workload identity, not long-lived keys)
+☐ No PII in CI environment variable names or values visible in build logs
+☐ detect-secrets or gitleaks prevents secrets being committed (pre-commit hook)
+☐ scan-pii-logs.sh runs as a pre-commit hook (init-secret-scanning.sh installs this)
 ```
 
 ---
@@ -1274,6 +1270,19 @@ The report must follow this structure:
 ## Data Classification Map
 
 [Diagram or table showing data sensitivity by system component]
+
+---
+
+## Record of Processing Activities (ROPA — GDPR Art. 30 / LGPD Art. 37)
+
+Synthesise the Data Inventory and Third-Party Data Flows into a ROPA. Each row is one processing activity. Use the data inventory to identify which fields belong to each activity, and the third-party flows to populate recipients and transfer mechanisms.
+
+| Processing Activity | Purpose | Legal Basis | Data Subjects | Personal Data Categories | Retention Period | Recipients / Processors | International Transfers | Automated Decision-Making? |
+|---|---|---|---|---|---|---|---|---|
+| User registration | Account creation | Contract (Art. 6(1)(b)) | Customers | Name, email, password hash | Account lifetime | Auth provider | No | No |
+| _(add one row per distinct processing activity detected)_ | | | | | | | | |
+
+> **Instructions:** This table must be reviewed and completed by a privacy engineer — the audit can populate data categories and recipients from the inventory scan, but purposes, legal bases, and retention periods require human judgment. File with the DPO. Update when any new processing activity begins or an existing one changes materially (GDPR Art. 30(4)).
 
 ---
 

@@ -209,7 +209,45 @@ jobs:
           sarif_file: trivy-results.sarif
           category: trivy
 
-  # ── 9. Data inventory audit (weekly only) ────────────────────────────────────
+  # ── 9. IaC privacy scan (scan-iac.py) ────────────────────────────────────────
+  iac-privacy-scan:
+    name: IaC Privacy Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run IaC privacy scanner
+        run: |
+          python3 scripts/scan-iac.py . --format sarif > iac-privacy.sarif
+        continue-on-error: false  # CRITICAL/HIGH IaC findings block the build
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: iac-privacy.sarif
+          category: iac-privacy-scan
+
+  # ── 10. Deletion coverage scan (scan-soft-deletes.sh) ────────────────────────
+  deletion-coverage:
+    name: Deletion Coverage Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run deletion coverage scanner
+        run: |
+          chmod +x scripts/scan-soft-deletes.sh
+          bash scripts/scan-soft-deletes.sh . --format text
+        continue-on-error: false  # HIGH findings (soft-delete without anonymization,
+                                  # event sourcing without crypto shredding, etc.) block build
+
+  # ── 11. Data inventory audit (weekly only) ───────────────────────────────────
   data-inventory:
     name: Data Inventory Report
     runs-on: ubuntu-latest

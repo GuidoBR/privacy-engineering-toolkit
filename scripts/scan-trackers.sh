@@ -20,13 +20,14 @@
 #   ./scripts/scan-trackers.sh [directory]
 #   ./scripts/scan-trackers.sh src/
 #   ./scripts/scan-trackers.sh --dir frontend/src --format json
+#   ./scripts/scan-trackers.sh --dir src/ --window 40   # larger window for deep component trees
 
 set -euo pipefail
 
 SCAN_DIR="."
 FORMAT="text"
 FOUND=0
-CONSENT_WINDOW=20  # lines above tracker call to search for a consent guard
+CONSENT_WINDOW=20  # default: lines above tracker call to search for a consent guard
 
 if [ -t 1 ]; then
   RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
@@ -39,6 +40,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -d|--dir)    SCAN_DIR="$2"; shift 2 ;;
     -f|--format) FORMAT="$2"; shift 2 ;;
+    -w|--window) CONSENT_WINDOW="$2"; shift 2 ;;
     *) SCAN_DIR="$1"; shift ;;
   esac
 done

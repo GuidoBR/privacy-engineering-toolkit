@@ -147,6 +147,56 @@ Example output:
            ✓ Consent check detected in file
 ```
 
+### `scripts/scan-iac.py` — Infrastructure Privacy Checks
+
+Deterministic privacy and security scanner for Terraform (`.tf`), CloudFormation (`.yml`/`.json`), and CDK TypeScript. Evaluates binary flags that an LLM should not guess at: encryption, public access, log retention, key rotation, PITR, autovacuum, IAM wildcards, security group rules. Also checks for hardcoded secrets, `--soft-fail` misconfiguration, and non-AWS cloud providers (GCP, Azure, Pulumi) that fall outside its scope.
+
+```bash
+# Text output
+python3 scripts/scan-iac.py infrastructure/
+
+# JSON (for CI integration)
+python3 scripts/scan-iac.py . --format json > iac-findings.json
+
+# SARIF (for GitHub Code Scanning)
+python3 scripts/scan-iac.py . --format sarif > iac.sarif
+```
+
+**Checks by resource type:** RDS encryption + public access + backup + deletion protection · S3 public access block + encryption · CloudWatch log retention + KMS · KMS key rotation · SQS encryption · DynamoDB SSE + PITR · security groups (DB ports open to 0.0.0.0/0) · IAM wildcard actions · RDS autovacuum disabled · CI/CD hardcoded secrets.
+
+**Exit code:** `0` = clean, `1` = findings detected.
+
+> **Scope:** AWS Terraform, CloudFormation, and CDK TypeScript only. GCP and Azure resources are detected and flagged as out-of-scope rather than silently ignored.
+
+---
+
+### `scripts/scan-soft-deletes.sh` — Deletion Coverage Audit
+
+Checks whether your codebase's deletion architecture is legally compliant. Catches the most common GDPR Art. 17 / LGPD Art. 18(VI) gaps deterministically, without asking an LLM to interpret grep output.
+
+```bash
+# Text output
+bash scripts/scan-soft-deletes.sh src/
+
+# JSON output
+bash scripts/scan-soft-deletes.sh . --format json
+```
+
+**Six checks:**
+
+| Check | Severity if gap found |
+|---|---|
+| Soft-delete flag (`deleted_at`, `is_deleted`) with no companion anonymization | HIGH |
+| `user_id`/`owner_id` in schema files with no FK constraint | MEDIUM |
+| Django `on_delete=DO_NOTHING` — no cascade at all | HIGH |
+| ORM-only cascade with no DB-level FK (bypass risk) | MEDIUM |
+| Event sourcing (Kafka/Kinesis) without crypto shredding | HIGH |
+| Data warehouse (BigQuery/Redshift/dbt) without deletion propagation | HIGH |
+
+**Exit code:** `0` = clean, `1` = findings detected.
+
+---
+
 ### `scripts/generate-data-inventory.py` — ORM Data Inventory
 
 Parses your ORM models and generates a data inventory with sensitivity classification.

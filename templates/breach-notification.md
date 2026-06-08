@@ -11,6 +11,17 @@ Templates for notifying the supervisory authority and affected data subjects aft
 >
 > **CCPA:** No direct breach notification in CCPA itself; California Civil Code §1798.82 applies (72 hours for businesses).
 
+> **⚠ When does the 72-hour clock start? (Common source of late-notification penalties)**
+>
+> Regulators (ICO, CNIL, DPC — EDPB Guidelines 01/2021 on breach notification) interpret **"became aware"** as the point when the controller has **reasonable grounds to believe** a personal data breach has occurred. This is **not** when the forensic investigation is complete or the full scope of affected individuals is confirmed.
+>
+> - Clock starts when your security team discovers evidence of unauthorised access, even if scope is unknown.
+> - A processor's breach affecting your data subjects: the processor's notification to *you* starts *your* clock.
+> - GDPR Art. 33(4) explicitly permits filing an **initial notification with incomplete information** and supplementing within 30 days. File early with what you know; do not wait for confirmation of full scope.
+> - Delaying until forensic investigation is complete, when that takes more than 72 hours, is the most common cause of late-notification enforcement actions.
+>
+> → Fill in `72-hour Clock Started` below as soon as you have reasonable grounds. Do not leave it blank pending investigation completion.
+
 ---
 
 ## Part 1 — Internal Incident Log (complete immediately)

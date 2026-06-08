@@ -716,8 +716,13 @@ def check_ci_yaml(path: Path) -> list[Finding]:
                         'GDPR Art. 32 / LGPD Art. 46'
                     ))
 
-    # Check checkov and trivy are not permanently soft-failing
-    if '--soft-fail' in content and 'checkov' in content:
+    # Check checkov and trivy enforcement — ignore commented-out lines so that
+    # advisory comments like "# --soft-fail removed" don't trigger false positives.
+    uncommented = '\n'.join(
+        line for line in content.splitlines()
+        if not line.strip().startswith('#')
+    )
+    if '--soft-fail' in uncommented and 'checkov' in uncommented:
         findings.append(Finding(
             'LOW', 'ci-checkov-soft-fail',
             'Checkov running with --soft-fail — IaC findings never block the build',
@@ -725,7 +730,7 @@ def check_ci_yaml(path: Path) -> list[Finding]:
             str(path), 0,
             ''
         ))
-    if 'exit-code: 0' in content and 'trivy' in content:
+    if 'exit-code: 0' in uncommented and 'trivy' in uncommented:
         findings.append(Finding(
             'LOW', 'ci-trivy-exit-zero',
             'Trivy configured with exit-code: 0 — vulnerabilities never block the build',
