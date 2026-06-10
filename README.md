@@ -247,6 +247,7 @@ Installs gitleaks and detect-secrets, scans git history, generates a baseline, a
 | [`templates/breach-notification.md`](templates/breach-notification.md) | Breach notification to supervisory authority and data subjects |
 | [`templates/processor-assessment.md`](templates/processor-assessment.md) | Vendor/processor due diligence questionnaire (Art. 28) |
 | [`templates/feature-privacy-checklist.md`](templates/feature-privacy-checklist.md) | PR checklist for features touching personal data |
+| [`templates/transparency-effectiveness.md`](templates/transparency-effectiveness.md) | Evidence template for ANPD / GDPR Art. 12 transparency effectiveness (usability, legibility, comprehension) |
 
 ---
 

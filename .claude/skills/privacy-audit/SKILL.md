@@ -367,6 +367,60 @@ find . -maxdepth 6 \( -iname "privacy*" -o -iname "terms*" -o -iname "cookies*" 
 ☐ Form fields with PII use autocomplete="off" for sensitive fields (passwords, SSN)
 ```
 
+**Transparency effectiveness audit** *(LGPD Art. 6(VI) / GDPR Art. 12 / ANPD enforcement posture 2026)*
+
+This goes beyond checking whether a privacy notice exists. ANPD enforcement has established that for controllers engaged in complex or high-risk processing, a legally complete notice is insufficient — **objective evidence of effectiveness** is required. Assess the following and raise findings proportional to the processing risk level:
+
+```bash
+# Find the privacy policy / notice pages
+find . -maxdepth 8 \( -iname "privacy*" -o -iname "aviso*privacidade*" \
+  -o -iname "politica*privacidade*" -o -iname "terms*" \) \
+  ! -path "*/node_modules/*" ! -path "*/.next/*" 2>/dev/null
+
+# Check whether a short notice appears at data collection points
+# (look for inline privacy text near form components)
+grep -rPn --include="*.tsx" --include="*.jsx" --include="*.vue" \
+  'privacy|privacidade|aviso|coletamos|collect|dados pessoais' \
+  src/ 2>/dev/null | grep -v 'import\|href=' | head -20
+
+# Check footer links on every page (layout/template file)
+grep -rPn --include="*.tsx" --include="*.jsx" --include="*.html" --include="*.vue" \
+  'privacy|privacidade|footer' \
+  src/ 2>/dev/null | grep -i 'footer\|layout\|template' | head -10
+```
+
+**Transparency effectiveness checklist:**
+```
+☐ Privacy notice reachable from homepage in ≤ 2 clicks (footer link on every page)
+☐ Short layered notice present at point of collection (2–3 sentences + link to full policy)
+    — LGPD Art. 8: consent must be unambiguous; collecting data before informing is violation
+☐ Privacy notice available in Portuguese (LGPD — language of data subject)
+☐ Reading level assessed and documented
+    — Target: Flesch-Kincaid Reading Ease ≥ 60 (~8th grade / plain newspaper language)
+    — Flag as MEDIUM if no reading level assessment exists for high-risk processing
+☐ Plain language used: no undefined acronyms, sentences ≤ 25 words, active voice
+☐ Accessibility: privacy notice renders correctly with screen readers; WCAG 2.1 AA contrast
+☐ For high-risk / large-scale processing: usability or comprehension evidence documented
+    — ANPD (2026 enforcement) has requested: usability studies, accessibility assessments,
+       legibility analysis, UX research, and informational comprehension tests demonstrating
+       that data subjects can locate and understand information without technical expertise.
+    — This aligns with WP29 WP260 rev.01 Guidelines on Transparency, where user testing
+       with participants representing the average data subject is the "gold standard."
+    — Use templates/transparency-effectiveness.md to document and preserve this evidence.
+```
+
+**Severity guidance for transparency effectiveness findings:**
+
+| Finding | Severity |
+|---|---|
+| Privacy notice not linked from footer / not findable | HIGH — Art. 12 GDPR / Art. 6(VI) LGPD violation |
+| No privacy notice at all | CRITICAL |
+| Notice not available in Portuguese (LGPD scope) | HIGH |
+| No short notice at point of collection | MEDIUM |
+| Reading level not assessed; notice uses dense legal language | MEDIUM (HIGH for high-risk processing) |
+| No usability / comprehension evidence for high-risk processing | MEDIUM (note: ANPD may elevate) |
+| Accessibility failures (contrast, screen reader) | MEDIUM |
+
 ---
 
 ### 2F. CI/CD and Pre-commit Hooks Audit

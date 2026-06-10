@@ -97,10 +97,26 @@ Attach to your pull request description.
 ## Section 7 — Transparency
 
 - [ ] **7.1** Does the privacy notice / policy need to be updated to reflect this feature?
-- [ ] **7.2** Will users be informed of the new data collection before it begins?
+- [ ] **7.2** Will users be informed of the new data collection **before** it begins (at the point of collection — not only in the full privacy policy)?
 - [ ] **7.3** If using cookies or local storage: is the cookie banner / consent manager updated?
 - [ ] **7.4** Is there any profiling or automated decision-making in this feature?
-  - If yes: is the logic documented? Can data subjects opt out or request human review?
+  - If yes: is the logic documented? Can data subjects opt out or request human review? (GDPR Art. 22 / LGPD Art. 20)
+
+**Transparency effectiveness** *(LGPD Art. 6(VI) / GDPR Art. 12 / ANPD enforcement posture 2026)*
+
+A legally complete privacy notice is necessary but not sufficient. ANPD enforcement has begun requiring evidence that notices are **effective** — that data subjects can actually find and understand them without technical expertise.
+
+- [ ] **7.5** Is the privacy notice written in plain language for a non-technical user?
+  - Target: Flesch-Kincaid Reading Ease ≥ 60 (~8th grade / plain newspaper language)
+  - Avoid: legal jargon, passive voice, sentences > 25 words, unexplained acronyms
+- [ ] **7.6** Is the privacy notice available in **Portuguese** for Brazilian users? (LGPD — information must be in the language of the data subject)
+- [ ] **7.7** Is there a **short layered notice** at the point of data collection?
+  - 2–3 sentences naming what is collected, why, and who receives it — with a link to the full policy
+- [ ] **7.8** Can a user reach the privacy notice from the homepage in **≤ 2 clicks**?
+  - Footer link on every page is the baseline
+- [ ] **7.9** For **high-risk or large-scale processing** (profiling, sensitive data, data sharing at scale): is there documented evidence of transparency effectiveness?
+  - Acceptable evidence: usability test notes, reading level score, accessibility audit report
+  - Required by ANPD for complex processing — see `templates/transparency-effectiveness.md`
 
 ---
 
